@@ -1,0 +1,58 @@
+* ucam
+
+  The other day, a very good friend of mine told me they were looking
+  for a camera system because their business has that sort of need.
+  Coming from someone that I'm always excited to do stuff with, I
+  immediately started thinking 0. this is the chance to put my
+  abandoned Raspberry Pi devices to use \o/ 1. the design of such
+  system and 2. the overall cost of the toy.
+
+  In the end we'll have 5 to 10 cameras hooked up to the system.  But
+  since we're in prototype phase, I just ordered a few random camera
+  devices from Amazon and I'll give them a try before things get
+  serious.  They're all compatible with the Raspberry Pi, otherwise I
+  won't be able to get rid of my lil PIs :D.
+
+  This is the [mostly obvious] design I put together:
+
+  [[./design.svg]]
+
+  The software stack is the following:
+
+  *Capture*
+  * Raspberry PI
+  * Raspbian as the Operating System
+  * Rust+GStreamer for capturing the video stream from the camera on
+    the Raspberry PI and shipping the it to storage and cloud.
+
+  *Storage*
+  - Rust for receiving the video stream and save file chunks & rotate
+    the existing chunks. Someday that configuration will be exposed to
+    end users.
+
+  *Playback*
+  * Web application that authenticates users via email & save JWT
+    token in local storage.
+  * WebRTC room where the software running in the Raspberry PI will
+    connect as a client.
+  * Video Player that displays what the cameras capture as it arrives.
+
+** Raspberry PI
+   * Flash the disk with the ~Raspbian~ Operating System
+** Camera
+   * Configure capture software to read from camera
+** Capture
+   * Shouldn't stream to cloud if nobody is watching
+   * Always send files to storage
+   * Alert if storage can't be reached
+   * Blink frantically if something isn't right
+** Storage
+   * Chunk stream into files of configurable duration
+   * Delete files older than a configurable date
+   * Alert on low storage space
+** Web Application
+   * ~JID~ like identifiers for cameras and users.
+   * WebSockets based chat room
+   * WebRTC Client
+   * Single Room for all devices and users
+   * Video Playback
