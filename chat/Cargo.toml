@@ -1,0 +1,11 @@
+[package]
+name = "chat"
+version = "0.1.0"
+authors = ["Lincoln de Sousa <lincoln@clarete.li>"]
+edition = "2018"
+
+[dependencies]
+actix = "0.9"
+actix-rt = "1.0"
+actix-web = "2.0"
+actix-web-actors = "2.0"
