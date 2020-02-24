@@ -1,0 +1,21 @@
+[logging]
+# Configure the level of different loggers
+actix_server = 'info'
+actix_web = 'info'
+chat = 'info'
+
+# The `userauth' section configures how human entities (users) can get
+# into the system.
+
+[userauth]
+# This documents the list of email addresses that can receive links to
+# use the endpoint `/token'.
+allowed_emails = ['adim@domain.tld']
+# How much time the authentication tokens are valid for, in hours
+token_validity = 2
+
+# Configure which device goes into which location
+[locations.studio]
+devices = ['cam001@studio.loc']
+[locations.workshop]
+devices = ['cam001@workshop.loc', 'cam002@workshop.loc']
