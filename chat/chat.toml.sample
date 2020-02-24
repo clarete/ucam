@@ -1,3 +1,7 @@
+[http]
+host = '127.0.0.1'
+port = 8080
+
 [logging]
 # Configure the level of different loggers
 actix_server = 'info'
@@ -10,7 +14,7 @@ chat = 'info'
 [userauth]
 # This documents the list of email addresses that can receive links to
 # use the endpoint `/token'.
-allowed_emails = ['adim@domain.tld']
+allowed_emails = ['admin@domain.tld']
 # How much time the authentication tokens are valid for, in hours
 token_validity = 2
 

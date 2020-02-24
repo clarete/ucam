@@ -94,12 +94,20 @@ struct ConfigLocation {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct Config {
-    logging: Option<ConfigLogging>,
-    userauth: Option<ConfigUserAuth>,
-    locations: std::collections::HashMap<String, ConfigLocation>,
+struct ConfigHTTP {
+    host: String,
+    port: u32,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct Config {
+    http: ConfigHTTP,
+    logging: Option<ConfigLogging>,
+    userauth: ConfigUserAuth,
+    locations: HashMap<String, ConfigLocation>,
+}
+
+/// Applicatio error types.
 #[derive(Debug)]
 enum ChatError {
     IO(io::Error),
@@ -149,14 +157,13 @@ fn load_config(args: &Vec<String>) -> Result<Config, ChatError> {
 async fn main() -> Result<(), io::Error> {
     let args: Vec<String> = std::env::args().collect();
     let config: Config = load_config(&args)?;
-
-    HttpServer::new(move || {
-        App::new()
-            .data(config.clone())
-            .route("/auth", web::get().to(auth))
-            .route("/ws/", web::get().to(ws))
-    })
-    .bind("127.0.0.1:8080")?
-    .run()
-    .await
+    let addr = format!("{}:{}", config.http.host, config.http.port);
+    let app = move || App::new()
+        .data(config.clone())
+        .route("/auth", web::post().to(auth))
+        .route("/ws/", web::get().to(ws));
+    HttpServer::new(app)
+        .bind(addr)?
+        .run()
+        .await
 }
