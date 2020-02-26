@@ -47,22 +47,74 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The server keeps track of all connected clients and all the open
+/// rooms.  Clients are registered in the server when they hit the
+/// websocket endpoint.
+#[derive(Clone)]
 struct ChatServer {
-    heartbeat: Instant,
+    clients: HashMap<String, Recipient<Message>>,
 }
 
 impl ChatServer {
-    fn new() -> Self {
-        return Self { heartbeat: Instant::now() };
+    fn new(config: Config) -> Self {
+        Self {
+            clients: HashMap::new(),
+        }
     }
 
+    // fn register(&mut self, jid: String, rec: Recipient<Message>) {
+    //     self.clients.insert(jid, rec);
+    // }
+}
+
+/// Make actor from `ChatServer`
+impl Actor for ChatServer {
+    /// We are going to use simple Context, we just need ability to
+    /// communicate with other actors.
+    type Context = Context<Self>;
+}
+
+/// Protocol messages for chat client-server communication
+
+/// Chat server sends this messages to session
+#[derive(Message)]
+#[rtype(result = "()")]
+struct Message(String);
+
+/// New chat session is created
+#[derive(Message)]
+#[rtype(usize)]
+struct Connect {
+    addr: Recipient<Message>,
+}
+
+/// Each new client instantiates a ChatConnection.  The `jid'
+/// identifies either device or person.  The `heartbeat' tracks the
+/// health of the connection.
+struct ChatConnection {
+    jid: String,
+    heartbeat: Instant,
+    server: Addr<ChatServer>,
+}
+
+/// Define the methods needed for a ChatConnection object
+impl ChatConnection {
+    fn new(jid: String, server: Addr<ChatServer>) -> Self {
+        return Self {
+            jid: jid,
+            server: server,
+            heartbeat: Instant::now(),
+        };
+    }
+
+    /// Update the heartbeat of the connection to right now
     fn alive(&mut self) {
         self.heartbeat = Instant::now();
     }
 }
 
-/// Define http actor for the ChatServer struct
-impl Actor for ChatServer {
+/// Define HTTP Actor for the ChatConnection struct
+impl Actor for ChatConnection {
     type Context = ws::WebsocketContext<Self>;
 
     /// Method is called on actor start.  We start the heartbeat
@@ -80,7 +132,7 @@ impl Actor for ChatServer {
 }
 
 /// Handler for ws::Message message
-impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatServer {
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
     fn handle(
         &mut self,
         msg: Result<ws::Message, ws::ProtocolError>,
@@ -99,13 +151,20 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatServer {
     }
 }
 
+// ---- Beginning of the HTTP methods ----
+
 /// Represents the data that arrives from the authentication form.
 #[derive(Debug, Deserialize)]
 struct AuthForm {
     user: String,
 }
 
-/// Authenticate the request
+/// Authenticate the user.  It takes the user from the request body
+/// and perform the following process:
+///   1. check if the admin has allowed that user to log in.
+///   2. Generate a JWT token with the server's private key.
+///   3. Send an email to the user with a link to the application with
+///      the token embedded on it.
 async fn auth(config: web::Data<Config>, body: web::Json<AuthForm>) -> impl Responder {
     for email in &config.userauth.allowed_emails {
         if *email == body.user {
@@ -117,8 +176,46 @@ async fn auth(config: web::Data<Config>, body: web::Json<AuthForm>) -> impl Resp
     HttpResponse::Unauthorized().body("Unknown Address")
 }
 
-async fn ws(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
-    ws::start(ChatServer::new(), &req, stream)
+/// This endpoint starts the WebSocket connection for a new client.
+///
+/// Welcoming a new client takes the following steps:
+///  1. Pull the JWT from HTTP header
+///  2. Decode & Check for its validity
+///  3. Create a ClientConnection instance from the JID read from the
+///     JWT token
+///  4. Register newly created client connection into the server
+///  4. Start a WebSocket session
+async fn ws(
+    req: HttpRequest,
+    stream: web::Payload,
+    server: web::Data<Addr<ChatServer>>,
+) -> Result<HttpResponse, actix_web::Error> {
+    if let Some(jid) = read_jid_from_request(&req) {
+        println!("jid: {}", jid);
+        ws::start(ChatConnection::new(jid, server.get_ref().clone()), &req, stream)
+    } else {
+        HttpResponse::Unauthorized().body("Unknown Address").await
+    }
+}
+
+/// Retrieve the `Authorization' header from the request's headers
+fn get_auth_header<'a>(req: &'a HttpRequest) -> Option<&'a str> {
+    req.headers().get("Authorization")?.to_str().ok()
+}
+
+/// Parse token from within auth header and extract
+///
+/// TODO: Right now, this function returns a string with the JID
+/// itself instead returning the struct with the claims and stuff.
+/// Mostly because we actually don't have tokens yet.
+fn decode_token_from_header(authorization: &str) -> String {
+    (&authorization[7..]).to_string()
+}
+
+/// Decode & Check JWT token from HTTP header
+fn read_jid_from_request(req: &HttpRequest) -> Option<String> {
+    let header = get_auth_header(req)?;
+    Some(decode_token_from_header(header))
 }
 
 /// Applicatio error types.
@@ -172,8 +269,9 @@ async fn main() -> Result<(), io::Error> {
     let args: Vec<String> = std::env::args().collect();
     let config: Config = load_config(&args)?;
     let addr = format!("{}:{}", config.http.host, config.http.port);
+    let server = ChatServer::new(config).start();
     let app = move || App::new()
-        .data(config.clone())
+        .data(server.clone())
         .route("/auth", web::post().to(auth))
         .route("/ws/", web::get().to(ws));
     HttpServer::new(app)
