@@ -10,6 +10,15 @@ use actix_web_actors::ws;
 
 use serde_derive::Deserialize;
 
+// ---- Constants ----
+
+/// How often heartbeat pings are sent
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+/// How long before lack of client response causes a timeout
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+// ---- Define the shape of the configuration object ----
+
 #[derive(Clone, Debug, Deserialize)]
 struct ConfigLogging {
     actix_server: String,
@@ -42,10 +51,27 @@ struct Config {
     locations: HashMap<String, ConfigLocation>,
 }
 
-/// How often heartbeat pings are sent
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-/// How long before lack of client response causes a timeout
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+// ---- Protocol messages for chat client-server communication ----
+
+/// Chat server sends this messages to session
+#[derive(Message)]
+#[rtype(result = "()")]
+struct Message(String);
+
+/// New client just connected
+#[derive(Message)]
+#[rtype(result = "()")]
+struct Connect {
+    jid: String,
+    addr: Recipient<Message>,
+}
+
+/// Client disconnected
+#[derive(Message)]
+#[rtype(result = "()")]
+struct Disconnect { jid: String }
+
+// ----- Server Implementation ----
 
 /// The server keeps track of all connected clients and all the open
 /// rooms.  Clients are registered in the server when they hit the
@@ -56,15 +82,11 @@ struct ChatServer {
 }
 
 impl ChatServer {
-    fn new(config: Config) -> Self {
+    fn new(_config: Config) -> Self {
         Self {
             clients: HashMap::new(),
         }
     }
-
-    // fn register(&mut self, jid: String, rec: Recipient<Message>) {
-    //     self.clients.insert(jid, rec);
-    // }
 }
 
 /// Make actor from `ChatServer`
@@ -74,19 +96,27 @@ impl Actor for ChatServer {
     type Context = Context<Self>;
 }
 
-/// Protocol messages for chat client-server communication
+/// Define the handler for Connect messages from ChatConnection
+/// actors.
+impl Handler<Connect> for ChatServer {
+    type Result = ();
 
-/// Chat server sends this messages to session
-#[derive(Message)]
-#[rtype(result = "()")]
-struct Message(String);
-
-/// New chat session is created
-#[derive(Message)]
-#[rtype(usize)]
-struct Connect {
-    addr: Recipient<Message>,
+    /// Insert the newly connected client into the clients hash table.
+    fn handle(&mut self, msg: Connect, _ctx: &mut Self::Context) {
+        self.clients.insert(msg.jid, msg.addr);
+    }
 }
+
+impl Handler<Disconnect> for ChatServer {
+    type Result = ();
+
+    /// Remove client a connection from the clients hash table.
+    fn handle(&mut self, msg: Disconnect, _ctx: &mut Self::Context) {
+        self.clients.remove(&msg.jid);
+    }
+}
+
+// ---- Chat Connection implementation ----
 
 /// Each new client instantiates a ChatConnection.  The `jid'
 /// identifies either device or person.  The `heartbeat' tracks the
@@ -108,18 +138,12 @@ impl ChatConnection {
     }
 
     /// Update the heartbeat of the connection to right now
-    fn alive(&mut self) {
+    fn heartbeat_update(&mut self) {
         self.heartbeat = Instant::now();
     }
-}
 
-/// Define HTTP Actor for the ChatConnection struct
-impl Actor for ChatConnection {
-    type Context = ws::WebsocketContext<Self>;
-
-    /// Method is called on actor start.  We start the heartbeat
-    /// process here.
-    fn started(&mut self, ctx: &mut <Self as Actor>::Context) {
+    /// Check heartbeat on intervals (HEARTBEAT_INTERVAL)
+    fn heartbeat_check(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.heartbeat) > CLIENT_TIMEOUT {
                 println!("Websocket Client heartbeat failed, disconnecting!");
@@ -128,6 +152,45 @@ impl Actor for ChatConnection {
                 ctx.ping(b"");
             }
         });
+    }
+
+    /// Send a message to the ChatServer actor in order to register
+    /// the ChatConnection within the server.
+    fn register(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        self.server.do_send(Connect {
+            jid: self.jid.clone(),
+            addr: ctx.address().recipient(),
+        });
+    }
+
+    /// Get itself removed from the ChatServer actor
+    fn deregister(&self) {
+        self.server.do_send(Disconnect {
+            jid: self.jid.clone(),
+        });
+    }
+}
+
+/// Define HTTP Actor for the ChatConnection struct
+impl Actor for ChatConnection {
+    type Context = ws::WebsocketContext<Self>;
+
+    /// Method is called on actor start and perform some
+    /// initialization tasks like a) sending a message to the actor
+    /// server to register itself and b) initialize heartbeat
+    /// watchdog.
+    fn started(&mut self, ctx: &mut <Self as Actor>::Context) {
+        self.heartbeat_check(ctx);
+        self.register(ctx);
+    }
+}
+
+/// Define the handler for messages from ChatServer.
+impl Handler<Message> for ChatConnection {
+    type Result = ();
+
+    fn handle(&mut self, msg: Message, ctx: &mut Self::Context) {
+        ctx.text(msg.0);
     }
 }
 
@@ -141,17 +204,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
         println!("msg: {:?}", msg);
 
         match msg {
-            Ok(ws::Message::Ping(msg))   => { self.alive(); ctx.pong(&msg) },
-            Ok(ws::Message::Pong(_))     => { self.alive(); },
+            Ok(ws::Message::Ping(msg))   => { self.heartbeat_update(); ctx.pong(&msg) },
+            Ok(ws::Message::Pong(_))     => { self.heartbeat_update(); },
             Ok(ws::Message::Text(text))  => ctx.text(text),
             Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
-            Ok(ws::Message::Close(_))    => { ctx.stop(); },
-            _ => ctx.stop(),
+            Ok(ws::Message::Close(_))    => { self.deregister(); ctx.stop(); },
+            _ => { self.deregister(); ctx.stop(); },
         }
     }
 }
 
-// ---- Beginning of the HTTP methods ----
+// ---- HTTP Handling ----
 
 /// Represents the data that arrives from the authentication form.
 #[derive(Debug, Deserialize)]
@@ -161,10 +224,15 @@ struct AuthForm {
 
 /// Authenticate the user.  It takes the user from the request body
 /// and perform the following process:
+///
 ///   1. check if the admin has allowed that user to log in.
 ///   2. Generate a JWT token with the server's private key.
 ///   3. Send an email to the user with a link to the application with
 ///      the token embedded on it.
+///
+/// This method *DOES NOT* require authentication.  This is in fact,
+/// the only entry point of the web application that doesn't require
+/// authentication because that's the door to the street.
 async fn auth(config: web::Data<Config>, body: web::Json<AuthForm>) -> impl Responder {
     for email in &config.userauth.allowed_emails {
         if *email == body.user {
