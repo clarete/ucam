@@ -31,28 +31,133 @@
     end users.
 
   *Playback*
-  * Web application that authenticates users via email & save JWT
+  * Web application that authenticates users via email & save ~JWT~
     token in local storage.
   * WebRTC room where the software running in the Raspberry PI will
     connect as a client.
   * Video Player that displays what the cameras capture as it arrives.
 
+** Configuration
+   Each software service will have its configuration defined in a
+   ~TOML~ file.
+
 ** Raspberry PI
-   * Flash the disk with the ~Raspbian~ Operating System
-** Camera
-   * Configure capture software to read from camera
+*** Setup Hardware Components
+    * I'm using a Raspberry Pi model 2
+    * Connect camera to the Raspberry Pi
+    * I use a USB debug cable
+*** Basic Software Setup
+    * Flash the disk with the ~Raspbian~ Operating System
+    * Setup Ethernet and update the system
+    * Enable camera firmware via ~raspi-config~ ([[https://www.raspberrypi.org/documentation/configuration/camera.md][from rpi's docs]]).
+    * Compile and test [[https://github.com/thaytan/gst-rpicamsrc][rpicamsrc]].
+*** Testing sending the stream
+
+    This is the first little pipeline that worked with the cameras in
+    the Raspberry Pi:
+
+    #+begin_src sh
+    $ gst-launch-1.0 -v rpicamsrc num-buffers=-1 ! \
+        video/x-raw,width=640,height=480, framerate=60/1 ! \
+        timeoverlay time-mode="buffer-time" ! jpegenc ! \
+        rtpjpegpay ! udpsink host=$LAPTOP port=$PORT
+    #+end_src
+
+    On the laptop, I used the following to play it
+
+    #+begin_src sh
+    $ gst-launch-1.0 udpsrc port=5200 caps="application/x-rtp" ! \
+        rtpjpegdepay ! decodebin ! videoconvert ! autovideosink
+    #+end_src
+
+    Notice the commands above are for testing purpose and will expose
+    a video stream to the network you're connected to without
+    authentication.  Make sure you in a network you trust or that you
+    don't care about what's being streamed.
+
 ** Capture
    * Shouldn't stream to cloud if nobody is watching
    * Always send files to storage
-   * Alert if storage can't be reached
    * Blink frantically if something isn't right
+     * if recording isn't working
+     * if storage can't be reached
 ** Storage
-   * Chunk stream into files of configurable duration
-   * Delete files older than a configurable date
-   * Alert on low storage space
+*** Data Rotation
+
+    The storage component will keep files for as long as storage space
+    allows.  The configuration entry ~maxspace~ can be set to limit
+    how much space the storage component can use.  If that value is
+    not set, the available space on the disk will be the limit.
+
+    When the amount of data stored crosses the value in ~maxspace~,
+    the oldest entries will be deleted to make room for the new ones.
+
+    The size of each chunk of video is also configurable through the
+    entry ~chunk-size~.
+
+*** Data Ingestion & Client Authentication
+
+    The exchange of the captured between the software reading from the
+    camera and the storage is done via ~RTSPS~.  The authentication of
+    the client is done with the tokens used by the capture software to
+    talk to the Web Application as well.
+
 ** Web Application
-   * ~JID~ like identifiers for cameras and users.
-   * WebSockets based chat room
-   * WebRTC Client
-   * Single Room for all devices and users
-   * Video Playback
+*** User Authentication
+
+    There are no passwords for users.  Here's how they get in:
+
+    An email is added to the configuration file of the Web Application
+    under the key ~userauth.allowed-emails~.  That grants that email
+    the permission to receive login tokens via email.
+
+    For generating a token, the user can access the Web UI and just
+    provide their email.  That will trigger an email that will receive
+    a link to the application with a token attached to the URL.
+
+    That token will be used for authentication and for token
+    recycling, which will happen every so often (also configurable via
+    ~userauth.token-validity~).
+
+*** Signaling
+
+    The conversation between peers (devices and humans) is managed by
+    a ~WebSocket~ server running under the web infrastructure.  In
+    order to reach the endpoint ~/ws~ with the ~WebSocket~ protocol,
+    the client must provide a ~JWT~ token within a header in the form
+    of ~Authorization: Bearer YOUR-TOKEN~ or via ~?auth=YOUR-TOKEN~
+    query string parameter. Such token can be acquired querying the
+    ~/auth~ endpoint.
+
+    Once the ~/ws~ endpoint is reached, it pulls the user's ~JID~ from
+    the ~JWT~ token attached to the request and uses it to identify
+    the client's connection within the server.
+
+    The messages ~Connect~ & ~Disconnect~ are sent from the
+    ~WebSocket~ process to the server process upon connection &
+    disconnection respectively.
+
+    When a camera device is ready to send a stream of video to the
+    server, it must send the ~OfferMedia~ message with ~ICE~ or ~SDP~
+    data.  The server will then forward that message to all the
+    connected clients that aren't devices.
+
+*** Locations and Devices
+
+    Locations exist for grouping devices.  Both locations and devices
+    are currently stored as configuration under the section
+    ~locations~, each sub-section will be a different location.  And
+    the only entry it currently takes is the list
+    ~locations.<name>.devices~ which contains the ~JIDs~ of devices
+    that are allowed to get in.
+
+    This is the data used for generating tokens for devices to
+    authenticate.
+
+*** Stuff
+
+    * ~JID~ like identifiers for cameras and users.
+    * WebSockets based chat room
+    * WebRTC Client
+    * Single Room for all devices and users
+    * Video Playback
