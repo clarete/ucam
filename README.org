@@ -1,41 +1,42 @@
 * ucam
+** Intro
 
-  The other day, a very good friend of mine told me they were looking
-  for a camera system because their business has that sort of need.
-  Coming from someone that I'm always excited to do stuff with, I
-  immediately started thinking 0. this is the chance to put my
-  abandoned Raspberry Pi devices to use \o/ 1. the design of such
-  system and 2. the overall cost of the toy.
+   The other day, a very good friend of mine told me they were looking
+   for a camera system because their business has that sort of need.
+   Coming from someone that I'm always excited to do stuff with, I
+   immediately started thinking 0. this is the chance to put my
+   abandoned Raspberry Pi devices to use \o/ 1. the design of such
+   system and 2. the overall cost of the toy.
 
-  In the end we'll have 5 to 10 cameras hooked up to the system.  But
-  since we're in prototype phase, I just ordered a few random camera
-  devices from Amazon and I'll give them a try before things get
-  serious.  They're all compatible with the Raspberry Pi, otherwise I
-  won't be able to get rid of my lil PIs :D.
+   In the end we'll have 5 to 10 cameras hooked up to the system.  But
+   since we're in prototype phase, I just ordered a few random camera
+   devices from Amazon and I'll give them a try before things get
+   serious.  They're all compatible with the Raspberry Pi, otherwise I
+   won't be able to get rid of my lil PIs :D.
 
-  This is the [mostly obvious] design I put together:
+   This is the [mostly obvious] design I put together:
 
-  [[./design.svg]]
+   [[./design.svg]]
 
-  The software stack is the following:
+   The software stack is the following:
 
-  *Capture*
-  * Raspberry PI
-  * Raspbian as the Operating System
-  * Rust+GStreamer for capturing the video stream from the camera on
-    the Raspberry PI and shipping the it to storage and cloud.
+   *Capture*
+   * Raspberry PI
+   * Raspbian as the Operating System
+   * Rust+GStreamer for capturing the video stream from the camera on
+     the Raspberry PI and shipping the it to storage and cloud.
 
-  *Storage*
-  - Rust for receiving the video stream and save file chunks & rotate
-    the existing chunks. Someday that configuration will be exposed to
-    end users.
+   *Storage*
+   - Rust for receiving the video stream and save file chunks & rotate
+     the existing chunks. Someday that configuration will be exposed
+     to end users.
 
-  *Playback*
-  * Web application that authenticates users via email & save ~JWT~
-    token in local storage.
-  * WebRTC room where the software running in the Raspberry PI will
-    connect as a client.
-  * Video Player that displays what the cameras capture as it arrives.
+   *Playback*
+   * Web application that authenticates users via email & save ~JWT~
+     token in local storage.
+   * WebRTC room where the software running in the Raspberry PI will
+     connect as a client.
+   * Video Player that displays what the cameras capture as it arrives.
 
 ** Configuration
    Each software service will have its configuration defined in a
@@ -51,30 +52,8 @@
     * Setup Ethernet and update the system
     * Enable camera firmware via ~raspi-config~ ([[https://www.raspberrypi.org/documentation/configuration/camera.md][from rpi's docs]]).
     * Compile and test [[https://github.com/thaytan/gst-rpicamsrc][rpicamsrc]].
-*** Testing sending the stream
-
-    This is the first little pipeline that worked with the cameras in
-    the Raspberry Pi:
-
-    #+begin_src sh
-    $ gst-launch-1.0 -v rpicamsrc num-buffers=-1 ! \
-        video/x-raw,width=640,height=480, framerate=60/1 ! \
-        timeoverlay time-mode="buffer-time" ! jpegenc ! \
-        rtpjpegpay ! udpsink host=$LAPTOP port=$PORT
-    #+end_src
-
-    On the laptop, I used the following to play it
-
-    #+begin_src sh
-    $ gst-launch-1.0 udpsrc port=5200 caps="application/x-rtp" ! \
-        rtpjpegdepay ! decodebin ! videoconvert ! autovideosink
-    #+end_src
-
-    Notice the commands above are for testing purpose and will expose
-    a video stream to the network you're connected to without
-    authentication.  Make sure you in a network you trust or that you
-    don't care about what's being streamed.
-
+    * Test a bunch of pipeline variations between the ~rpi~ and my
+      laptop (There's an appendix in the end with some notes).
 ** Capture
    * Shouldn't stream to cloud if nobody is watching
    * Always send files to storage
@@ -161,3 +140,48 @@
     * WebRTC Client
     * Single Room for all devices and users
     * Video Playback
+
+** Appendix - Testing Pipelines
+
+   These are mostly the notes I took while I was putting the pipelines
+   together. They might be useful to understand how the overall
+   project works and also to have an online backup of some cool
+   /GStreamer/ pipelines I can copy and paste at random when I need
+   them.
+
+   Notice the commands to follow are for testing purpose and will
+   expose a video stream to the network you're connected to without
+   authentication.  Make sure you in a network you trust or that you
+   don't care about what's being streamed.
+
+*** Pipeline #1: rpicamsrc ! jpegenc ! rtpjpegpay ! udpsink
+**** Raspberry Pi
+     #+begin_src sh
+     $ gst-launch-1.0 -v rpicamsrc num-buffers=-1 ! \
+         video/x-raw,width=640,height=480, framerate=60/1 ! \
+         timeoverlay time-mode="buffer-time" ! jpegenc ! \
+         rtpjpegpay ! udpsink host=$LAPTOP port=$PORT
+     #+end_src
+
+**** Laptop
+     #+begin_src sh
+     $ gst-launch-1.0 udpsrc port=5200 caps="application/x-rtp" ! \
+         rtpjpegdepay ! decodebin ! videoconvert ! autovideosink
+     #+end_src
+
+*** Pipeline #2: rpicamsrc ! jpegenc ! rtpjpegpay ! rtspclientsink
+
+**** Raspberry Pi
+     #+begin_src sh
+     $ gst-launch-1.0 -v rpicamsrc num-buffers=-1 ! \
+         video/x-raw,width=640,height=480, framerate=60/1 ! \
+         timeoverlay time-mode="buffer-time" ! jpegenc ! \
+         rtpjpegpay ! rtspclientsink location="rtsp://$LAPTOP:$PORT/test"
+     #+end_src
+
+**** Laptop
+     #+begin_src sh
+     $ gst-launch-1.0 rtspsrc location="$LAPTOP:$PORT/test" latency=1 ! \
+         rtpjpegdepay ! decodebin ! videoconvert ! autovideosink
+     #+end_src
+
