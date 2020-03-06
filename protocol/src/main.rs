@@ -200,6 +200,15 @@ impl Actor for ChatConnection {
         self.heartbeat_check(ctx);
         self.register(ctx);
     }
+
+    /// Called when te actor is shutting down, it will notify the
+    /// server that this client is gone so the server can keep the
+    /// list of connected clients accurate.
+    fn stopping(&mut self, _: &mut ws::WebsocketContext<Self>) -> Running {
+        self.server.do_send(Disconnect { jid: self.jid.clone() });
+        Running::Stop
+    }
+
 }
 
 /// Define the handler for messages from ChatServer.
