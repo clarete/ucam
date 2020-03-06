@@ -71,11 +71,18 @@ struct Connect {
 #[rtype(result = "()")]
 struct Disconnect { jid: String }
 
+/// List connections
+struct ListClients;
+
+impl actix::Message for ListClients {
+    type Result = Vec<String>;
+}
+
+
 // ----- Server Implementation ----
 
-/// The server keeps track of all connected clients and all the open
-/// rooms.  Clients are registered in the server when they hit the
-/// websocket endpoint.
+/// The server keeps track of all connected clients.  Clients are
+/// registered in the server when they hit the websocket endpoint.
 #[derive(Clone)]
 struct ChatServer {
     clients: HashMap<String, Recipient<Message>>,
@@ -113,6 +120,16 @@ impl Handler<Disconnect> for ChatServer {
     /// Remove client a connection from the clients hash table.
     fn handle(&mut self, msg: Disconnect, _ctx: &mut Self::Context) {
         self.clients.remove(&msg.jid);
+    }
+}
+
+impl Handler<ListClients> for ChatServer {
+    type Result = MessageResult<ListClients>;
+
+    /// Return a list with the JIDs of all currently connected clients
+    fn handle(&mut self, _: ListClients, _ctx: &mut Self::Context) -> Self::Result {
+        let keys = self.clients.keys().map(|i| i.clone()).collect::<Vec<String>>();
+        MessageResult(keys)
     }
 }
 
@@ -214,7 +231,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
     }
 }
 
-// ---- HTTP Handling ----
+// ---- HTTP API ----
+
+async fn http_api_list(
+    _req: HttpRequest,
+    server: web::Data<Addr<ChatServer>>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let clients = server.send(ListClients {}).await.unwrap();
+    Ok(HttpResponse::Ok().json(clients))
+}
+
+// ---- HTTP Server Handling ----
 
 /// Represents the data that arrives from the authentication form.
 #[derive(Debug, Deserialize)]
@@ -341,7 +368,8 @@ async fn main() -> Result<(), io::Error> {
     let app = move || App::new()
         .data(server.clone())
         .route("/auth", web::post().to(auth))
-        .route("/ws/", web::get().to(ws));
+        .route("/ws", web::get().to(ws))
+        .route("/api/list", web::get().to(http_api_list));
     HttpServer::new(app)
         .bind(addr)?
         .run()
