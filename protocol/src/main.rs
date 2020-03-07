@@ -40,7 +40,7 @@ struct ConfigLocation {
 #[derive(Clone, Debug, Deserialize)]
 struct ConfigHTTP {
     host: String,
-    port: u32,
+    port: u16,
 }
 
 #[derive(Clone, Debug, Deserialize)]
