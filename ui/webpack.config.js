@@ -44,5 +44,13 @@ module.exports = {
     path: path.resolve(__dirname, 'dist'),
     publicPath: '/dist/',
     filename: 'main.js'
+  },
+  devServer: {
+    proxy: {
+      '/b': {
+        target: 'http://localhost:7070',
+        pathRewrite: {'^/b' : ''}
+      }
+    }
   }
 };
