@@ -89,7 +89,7 @@ struct ChatServer {
 }
 
 impl ChatServer {
-    fn new(_config: Config) -> Self {
+    fn new() -> Self {
         Self {
             clients: HashMap::new(),
         }
@@ -242,8 +242,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
 
 // ---- HTTP API ----
 
+/// List currently connected clients
 async fn http_api_list(
-    _req: HttpRequest,
     server: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let clients = server.send(ListClients {}).await.unwrap();
@@ -255,7 +255,7 @@ async fn http_api_list(
 /// Represents the data that arrives from the authentication form.
 #[derive(Debug, Deserialize)]
 struct AuthForm {
-    user: String,
+    jid: String,
 }
 
 /// Authenticate the user.  It takes the user from the request body
@@ -271,13 +271,15 @@ struct AuthForm {
 /// authentication because that's the door to the street.
 async fn auth(config: web::Data<Config>, body: web::Json<AuthForm>) -> impl Responder {
     for email in &config.userauth.allowed_emails {
-        if *email == body.user {
+        // Authentication doesn't need full JID
+        let jid: Vec<&str> = body.jid.split('/').collect();
+        if *email == jid[0] {
             // TODO: Generate token for user
             // TODO: Send token via email
             return HttpResponse::Ok().finish();
         }
     }
-    HttpResponse::Unauthorized().body("Unknown Address")
+    HttpResponse::Unauthorized().finish()
 }
 
 /// This endpoint starts the WebSocket connection for a new client.
@@ -373,11 +375,12 @@ async fn main() -> Result<(), io::Error> {
     let args: Vec<String> = std::env::args().collect();
     let config: Config = load_config(&args)?;
     let addr = format!("{}:{}", config.http.host, config.http.port);
-    let server = ChatServer::new(config).start();
+    let address = ChatServer::new().start();
     let app = move || App::new()
-        .data(server.clone())
-        .route("/auth", web::post().to(auth))
+        .data(config.clone())
+        .data(address.clone())
         .route("/ws", web::get().to(ws))
+        .route("/auth", web::post().to(auth))
         .route("/api/list", web::get().to(http_api_list));
     HttpServer::new(app)
         .bind(addr)?
