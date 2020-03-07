@@ -13,7 +13,7 @@ import Typography from '@material-ui/core/Typography';
 import Container from '@material-ui/core/Container';
 
 import { useForm } from 'react-hook-form';
-import { store, AuthStatus } from './store';
+import { store, AuthState } from './store';
 import SpinnerIcon from './spinner';
 
 const CenterCenterShell = styled.div`
@@ -34,10 +34,18 @@ const Error = styled.div`
   color: #ee2200;
 `;
 
+function MainScreen() {
+  return (
+    <div>
+      Should be something
+    </div>
+  );
+}
+
 function AuthForm() {
-  const { dispatch, state } = React.useContext(store);
+  const { api, state } = React.useContext(store);
   const { register, handleSubmit, errors } = useForm();
-  const onSubmit = data => { dispatch({ type: 'auth', data }); };
+
   return (
     <CenterCenterShell>
       <Container component="main" maxWidth="xs">
@@ -49,7 +57,7 @@ function AuthForm() {
             Sign in
           </Typography>
         </AvatarShell>
-        <form noValidate onSubmit={handleSubmit(onSubmit)}>
+        <form noValidate onSubmit={handleSubmit(api.auth)}>
           <TextField
             variant="outlined"
             margin="normal"
@@ -66,6 +74,12 @@ function AuthForm() {
            <Error>
              Email is required.
            </Error>}
+
+          {state.auth.state === AuthState.Unauthorized &&
+            <Error>
+              Email unauthorized.
+            </Error>}
+
           <Button
             type="submit"
             fullWidth
@@ -80,14 +94,6 @@ function AuthForm() {
   );
 }
 
-function MainScreen() {
-  return (
-    <div>
-      Logged-in
-    </div>
-  );
-}
-
 function Loading() {
   return (
     <CenterCenterShell>
@@ -99,11 +105,11 @@ function Loading() {
 export default function App() {
   const { dispatch, state } = React.useContext(store);
   switch (state.auth.state) {
-  case AuthStatus.Anonymous:
-    return <AuthForm />;
-  case AuthStatus.Loading:
+  case AuthState.Loading:
     return <Loading />;
-  case AuthStatus.Authenticated:
+  case AuthState.Authenticated:
     return <MainScreen />;
+  default:
+    return <AuthForm />;
   }
 }
