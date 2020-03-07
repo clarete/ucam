@@ -8,6 +8,7 @@
   },
   "author": "Lincoln Clarete",
   "license": "AGPL-3.0-or-later",
+  "browserslist": ["since 2017-06"],
   "dependencies": {
     "@material-ui/core": "^4.5.0",
     "@material-ui/icons": "^4.9.1",
