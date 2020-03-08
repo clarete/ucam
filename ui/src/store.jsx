@@ -39,38 +39,39 @@ const createReducer = () => {
 const rnd = new Uint32Array(1); window.crypto.getRandomValues(rnd);
 const resource = rnd.join('');
 
-const buildAPI = (state, dispatch) => {
-  // This is the currently supported API
-  return {
-    /** Authenticate a user */
-    auth: async (data) => {
-      // Update UI to show loading spinner
-      dispatch({ type: 'auth.state', data: AuthState.Loading });
+/** The public API for this storage layer.  */
+const buildAPI = (state, dispatch) => ({
+  /** Retrieve user authentication state */
+  authState: () => state.auth.state,
 
-      // Build the full user's JID.  That'd allow the same user to
-      // access the system from different devices.
-      const jid = `${data.email}/${resource}`
+  /** Authenticate a user */
+  auth: async (data) => {
+    // Update UI to show loading spinner
+    dispatch({ type: 'auth.state', data: AuthState.Loading });
 
-      // Actual auth
-      const response = await fetch('/b/auth', {
-        method: 'post',
-        body: JSON.stringify({ jid }),
-        headers: { 'Content-Type': 'application/json' },
-      });
+    // Build the full user's JID.  That'd allow the same user to
+    // access the system from different devices.
+    const jid = `${data.email}/${resource}`;
 
-      // Update UI to either show the result of authentication
-      const statusToState = {
-        200: AuthState.Authenticated,
-        400: AuthState.Failed,
-        401: AuthState.Unauthorized,
-      };
-      dispatch({
-        type: 'auth.state',
-        data: statusToState[response.status],
-      });
-    },
-  };
-};
+    // Actual auth
+    const response = await fetch('/b/auth', {
+      method: 'post',
+      body: JSON.stringify({ jid }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    // Update UI to either show the result of authentication
+    const statusToState = {
+      200: AuthState.Authenticated,
+      400: AuthState.Failed,
+      401: AuthState.Unauthorized,
+    };
+    dispatch({
+      type: 'auth.state',
+      data: statusToState[response.status],
+    });
+  },
+});
 
 const Provider = ({ children }) => {
   const { Provider } = store;

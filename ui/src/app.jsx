@@ -36,14 +36,14 @@ const Error = styled.div`
 
 function MainScreen() {
   return (
-    <div>
+    <CenterCenterShell>
       Should be something
-    </div>
+    </CenterCenterShell>
   );
 }
 
 function AuthForm() {
-  const { api, state } = React.useContext(store);
+  const { api } = React.useContext(store);
   const { register, handleSubmit, errors } = useForm();
 
   return (
@@ -75,7 +75,7 @@ function AuthForm() {
              Email is required.
            </Error>}
 
-          {state.auth.state === AuthState.Unauthorized &&
+          {api.authState() === AuthState.Unauthorized &&
             <Error>
               Email unauthorized.
             </Error>}
@@ -103,8 +103,8 @@ function Loading() {
 }
 
 export default function App() {
-  const { dispatch, state } = React.useContext(store);
-  switch (state.auth.state) {
+  const { api } = React.useContext(store);
+  switch (api.authState()) {
   case AuthState.Loading:
     return <Loading />;
   case AuthState.Authenticated:
