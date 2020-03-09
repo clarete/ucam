@@ -243,7 +243,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
 // ---- HTTP API ----
 
 /// List currently connected clients
-async fn http_api_list(
+async fn http_api_clients(
     server: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let clients = server.send(ListClients {}).await.unwrap();
@@ -395,7 +395,7 @@ async fn main() -> Result<(), io::Error> {
         .data(address.clone())
         .route("/ws", web::get().to(ws))
         .route("/auth", web::post().to(auth))
-        .route("/api/list", web::get().to(http_api_list));
+        .route("/clients", web::get().to(http_api_clients));
     HttpServer::new(app)
         .bind(addr)?
         .run()
