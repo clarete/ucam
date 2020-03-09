@@ -300,8 +300,19 @@ async fn ws(
         println!("jid: {}", jid);
         ws::start(ChatConnection::new(jid, server.get_ref().clone()), &req, stream)
     } else {
-        HttpResponse::Unauthorized().body("Unknown Address").await
+        Ok(HttpResponse::Unauthorized().finish())
     }
+}
+
+#[derive(Deserialize)]
+struct QueryAuthParams {
+    token: String,
+}
+
+/// Retrieve the auth token from the query string
+fn get_auth_token(req: &HttpRequest) -> Result<String, serde_qs::Error> {
+    let qs: QueryAuthParams = serde_qs::from_str(req.query_string())?;
+    return Ok(qs.token)
 }
 
 /// Retrieve the `Authorization' header from the request's headers
@@ -318,10 +329,13 @@ fn decode_token_from_header(authorization: &str) -> String {
     (&authorization[7..]).to_string()
 }
 
-/// Decode & Check JWT token from HTTP header
+/// Decode & Check JWT token from HTTP header or QueryString
 fn read_jid_from_request(req: &HttpRequest) -> Option<String> {
-    let header = get_auth_header(req)?;
-    Some(decode_token_from_header(header))
+    let token = match get_auth_token(req) {
+        Ok(token) => token,
+        _ => decode_token_from_header(get_auth_header(req)?)
+    };
+    Some(token)
 }
 
 /// Applicatio error types.
