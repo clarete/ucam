@@ -5,6 +5,8 @@ authors = ["Lincoln de Sousa <lincoln@clarete.li>"]
 edition = "2018"
 
 [dependencies]
+env_logger = "*"
+log = "*"
 actix = "0.9"
 actix-rt = "1.0"
 actix-web = "2.0"

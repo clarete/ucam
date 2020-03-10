@@ -1,3 +1,5 @@
+#[macro_use] extern crate log;
+
 use std::io;
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
@@ -174,6 +176,7 @@ impl ChatConnection {
     /// Send a message to the ChatServer actor in order to register
     /// the ChatConnection within the server.
     fn register(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        info!("Client connected: {}", self.jid);
         self.server.do_send(Connect {
             jid: self.jid.clone(),
             addr: ctx.address().recipient(),
@@ -182,6 +185,7 @@ impl ChatConnection {
 
     /// Get itself removed from the ChatServer actor
     fn deregister(&self) {
+        info!("Client disconnected: {}", self.jid);
         self.server.do_send(Disconnect {
             jid: self.jid.clone(),
         });
@@ -297,7 +301,6 @@ async fn ws(
     server: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     if let Some(jid) = read_jid_from_request(&req) {
-        println!("jid: {}", jid);
         ws::start(ChatConnection::new(jid, server.get_ref().clone()), &req, stream)
     } else {
         Ok(HttpResponse::Unauthorized().finish())
@@ -386,6 +389,7 @@ fn load_config(args: &Vec<String>) -> Result<Config, ChatError> {
 
 #[actix_rt::main]
 async fn main() -> Result<(), io::Error> {
+    env_logger::init();
     let args: Vec<String> = std::env::args().collect();
     let config: Config = load_config(&args)?;
     let addr = format!("{}:{}", config.http.host, config.http.port);
