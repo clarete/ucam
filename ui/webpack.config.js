@@ -47,9 +47,14 @@ module.exports = {
   },
   devServer: {
     proxy: {
-      '/b': {
+      '/ws': {
         target: 'http://localhost:7070',
-        pathRewrite: {'^/b' : ''}
+        ws: true
+      },
+
+      '/api': {
+        target: 'http://localhost:7070',
+        pathRewrite: {'^/api' : ''}
       }
     }
   }
