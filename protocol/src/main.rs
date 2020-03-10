@@ -209,10 +209,9 @@ impl Actor for ChatConnection {
     /// server that this client is gone so the server can keep the
     /// list of connected clients accurate.
     fn stopping(&mut self, _: &mut ws::WebsocketContext<Self>) -> Running {
-        self.server.do_send(Disconnect { jid: self.jid.clone() });
+        self.deregister();
         Running::Stop
     }
-
 }
 
 /// Define the handler for messages from ChatServer.
