@@ -2,7 +2,7 @@
 
 use std::io;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use actix_rt;
 use actix::prelude::*;
@@ -77,17 +77,35 @@ struct Disconnect { jid: String }
 struct ListClients;
 
 impl actix::Message for ListClients {
-    type Result = Vec<String>;
+    type Result = HashMap<String, HashSet<String>>;
 }
 
 
 // ----- Server Implementation ----
 
+/// Client data the server needs to keep track of
+#[derive(Clone)]
+struct ClientInfo {
+    addr: Recipient<Message>,
+    caps: HashSet<String>,
+}
+
+impl ClientInfo {
+    /// Construct an instance of the ClientInfo taking the address of
+    /// the client received during connection time.
+    fn new(addr: Recipient<Message>) -> Self {
+        ClientInfo {
+            addr: addr,
+            caps: HashSet::<String>::new(),
+        }
+    }
+}
+
 /// The server keeps track of all connected clients.  Clients are
 /// registered in the server when they hit the websocket endpoint.
 #[derive(Clone)]
 struct ChatServer {
-    clients: HashMap<String, Recipient<Message>>,
+    clients: HashMap<String, ClientInfo>,
 }
 
 impl ChatServer {
@@ -112,7 +130,7 @@ impl Handler<Connect> for ChatServer {
 
     /// Insert the newly connected client into the clients hash table.
     fn handle(&mut self, msg: Connect, _ctx: &mut Self::Context) {
-        self.clients.insert(msg.jid, msg.addr);
+        self.clients.insert(msg.jid, ClientInfo::new(msg.addr));
     }
 }
 
@@ -130,8 +148,11 @@ impl Handler<ListClients> for ChatServer {
 
     /// Return a list with the JIDs of all currently connected clients
     fn handle(&mut self, _: ListClients, _ctx: &mut Self::Context) -> Self::Result {
-        let keys = self.clients.keys().map(|i| i.clone()).collect::<Vec<String>>();
-        MessageResult(keys)
+        let mut output: HashMap<String, HashSet<String>> = HashMap::new();
+        for (key, client_info) in &self.clients {
+            output.insert(key.clone(), client_info.caps.clone());
+        }
+        MessageResult(output)
     }
 }
 
