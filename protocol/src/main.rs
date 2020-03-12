@@ -80,6 +80,21 @@ impl actix::Message for ListClients {
     type Result = HashMap<String, HashSet<String>>;
 }
 
+/// Configure a specific client
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+struct ConfigClient {
+    jid: String,
+    caps: HashSet<String>,
+}
+
+/// Container for client capabilities.  This is what each single
+/// ChatConnection actor receives from the client.
+#[derive(Deserialize, Debug)]
+struct ClientCaps {
+    caps: HashSet<String>,
+}
+
 
 // ----- Server Implementation ----
 
@@ -156,6 +171,17 @@ impl Handler<ListClients> for ChatServer {
     }
 }
 
+impl Handler<ConfigClient> for ChatServer {
+    type Result = ();
+
+    /// Save the capabilities received via ChatConnection
+    fn handle(&mut self, msg: ConfigClient, _ctx: &mut Self::Context) {
+        for cap in &msg.caps {
+            self.clients.get_mut(&msg.jid).unwrap().caps.insert(cap.clone());
+        }
+    }
+}
+
 // ---- Chat Connection implementation ----
 
 /// Each new client instantiates a ChatConnection.  The `jid'
@@ -211,6 +237,16 @@ impl ChatConnection {
             jid: self.jid.clone(),
         });
     }
+
+    /// Handle incoming messages from clients
+    fn handle_message(&self, msg: String) {
+        info!("Receive caps from {}", self.jid);
+        let caps_object: ClientCaps = serde_json::from_str(msg.as_str()).unwrap();
+        self.server.do_send(ConfigClient {
+            jid: self.jid.clone(),
+            caps: caps_object.caps,
+        });
+    }
 }
 
 /// Define HTTP Actor for the ChatConnection struct
@@ -251,12 +287,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
         msg: Result<ws::Message, ws::ProtocolError>,
         ctx: &mut Self::Context,
     ) {
-        println!("msg: {:?}", msg);
-
         match msg {
             Ok(ws::Message::Ping(msg))   => { self.heartbeat_update(); ctx.pong(&msg) },
             Ok(ws::Message::Pong(_))     => { self.heartbeat_update(); },
-            Ok(ws::Message::Text(text))  => ctx.text(text),
+            Ok(ws::Message::Text(text))  => { self.handle_message(text); },
             Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
             Ok(ws::Message::Close(_))    => { self.deregister(); ctx.stop(); },
             _ => { self.deregister(); ctx.stop(); },

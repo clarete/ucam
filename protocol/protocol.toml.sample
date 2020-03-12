@@ -1,6 +1,6 @@
 [http]
 host = '127.0.0.1'
-port = 8080
+port = 7070
 
 [logging]
 # Configure the level of different loggers
@@ -14,7 +14,7 @@ chat = 'info'
 [userauth]
 # This documents the list of email addresses that can receive links to
 # use the endpoint `/token'.
-allowed_emails = ['admin@domain.tld']
+allowed_emails = ['admin@domain.tld', 'cam001@studio.loc']
 # How much time the authentication tokens are valid for, in hours
 token_validity = 2
 
