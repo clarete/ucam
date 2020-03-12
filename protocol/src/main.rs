@@ -291,8 +291,6 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
             Ok(ws::Message::Ping(msg))   => { self.heartbeat_update(); ctx.pong(&msg) },
             Ok(ws::Message::Pong(_))     => { self.heartbeat_update(); },
             Ok(ws::Message::Text(text))  => { self.handle_message(text); },
-            Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
-            Ok(ws::Message::Close(_))    => { ctx.stop(); },
             _                            => { ctx.stop(); },
         }
     }
