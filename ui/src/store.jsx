@@ -58,6 +58,16 @@ class API {
     return this.state.auth.state;
   };
 
+  /** Return the bare piece of the user's JID */
+  getBareJID() {
+    const { user } = this.state.auth;
+    if (user) {
+      const [bareJid, ] = user.split('/');
+      return bareJid;
+    }
+    return user;
+  }
+
   /** Authenticate a user */
   async auth(data) {
     // Update UI to show loading spinner
@@ -92,7 +102,7 @@ class API {
   async listClients() {
     const response = await window.fetch('/api/clients');
     const allClients = await response.json();
-    delete allClients[this.state.auth.user];
+    delete allClients[this.getBareJID()];
     return allClients;
   }
 
