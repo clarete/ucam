@@ -59,11 +59,42 @@ const IconShell = styled.div`
   }
 `;
 
+const StreamingClientShell = styled.div`
+  & video {
+    border: solid 1px black;
+  }
+`;
+
+function StreamingClient({ clientId }) {
+  return (
+    <StreamingClientShell>
+      <h2>{clientId}</h2>
+      <video id={`stream-${clientId}`} autoPlay={true} playsInline={true}>
+        Your browser doesn't support video
+      </video>
+      <div>Status: <b id={`status-${clientId}`}>unknown</b></div>
+      <div>Peer ID: <b id={`peer-id-${clientId}`}>unknown</b></div>
+      <div><textarea id={`text-id-${clientId}`} cols="40" rows="4"></textarea></div>
+    </StreamingClientShell>
+  );
+}
+
+function StreamingScreen() {
+  const { api } = React.useContext(store);
+  return (
+    <CenterCenterShell>
+      {api.state.connectedTo.map(cid =>
+        <StreamingClient key={`key-cli-${cid}`} clientId={cid} />)}
+    </CenterCenterShell>
+  );
+}
+
 const iconStyle = { width: 16, height: 16 };
 
 function ClientItem({ primary, caps }) {
+  const { api } = React.useContext(store);
   return (
-    <ListItem button component="li">
+    <ListItem button component="li" onClick={() => api.connectTo(primary)}>
       <ListItemText primary={primary} />
       <ListItemSecondaryAction>
         {caps.map(c =>
@@ -80,7 +111,7 @@ function ClientItem({ primary, caps }) {
   );
 }
 
-function MainScreen() {
+function ListClientsScreen() {
   const { api } = React.useContext(store);
   const [clientList, setClientList] = React.useState({});
   React.useEffect(() => {
@@ -153,6 +184,13 @@ function AuthForm() {
       </Container>
     </CenterCenterShell>
   );
+}
+
+function MainScreen() {
+  const { api } = React.useContext(store);
+  return api.isConnectedToSomeone()
+    ? <StreamingScreen />
+    : <ListClientsScreen />;
 }
 
 function Loading() {

@@ -10,6 +10,7 @@ const AuthState = {
 
 const initialState = {
   ws: null,
+  connectedTo: [],
   auth: {
     state: AuthState.Anonymous,
     user: null,
@@ -32,6 +33,12 @@ const createReducer = () => {
       const newState = { ...state };
       newState.auth.state = AuthState.Authenticated;
       newState.auth.user = action.jid;
+      return newState;
+    }
+
+    case 'connect.to': {
+      const newState = { ...state };
+      newState.connectedTo.push(action.data);
       return newState;
     }
 
@@ -104,6 +111,16 @@ class API {
     const allClients = await response.json();
     delete allClients[this.getBareJID()];
     return allClients;
+  }
+
+  /** Return true if this client is connected to any other client */
+  isConnectedToSomeone() {
+    return this.state.connectedTo.length > 0;
+  }
+
+  /** Dispatch message to connect to a given client */
+  connectTo(client) {
+    this.dispatch({ type: 'connect.to', data: client });
   }
 
   /** Return the URL to connect to the WebSocket */
