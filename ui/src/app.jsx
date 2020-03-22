@@ -47,7 +47,16 @@ const IconShell = styled.div`
   width: 24px;
   height: 24px;
   float: left;
-  marginRight: 2px;
+  margin-left: 4px;
+
+  .MuiAvatar-root {
+    width: 25px;
+    height: 25px;
+  }
+
+  .MuiAvatar-colorDefault {
+    background-color: #ccc;
+  }
 `;
 
 const iconStyle = { width: 16, height: 16 };
@@ -58,13 +67,14 @@ function ClientItem({ primary, caps }) {
       <ListItemText primary={primary} />
       <ListItemSecondaryAction>
         {caps.map(c =>
-          {['s:audio', 's:video'].includes(c) &&
-           <IconShell key={`key-cap-${primary}-${c}`}>
-             <Avatar>
-               {c === 's:video' && <VideocamIcon style={iconStyle} />}
-               {c === 's:audio' && <MicIcon style={iconStyle} />}
-             </Avatar>
-           </IconShell>})}
+          ['s:audio', 's:video'].includes(c) &&
+            <IconShell key={`key-cap-${primary}-${c}`}>
+              <Avatar>
+                {c === 's:video' && <VideocamIcon style={iconStyle} />}
+                {c === 's:audio' && <MicIcon style={iconStyle} />}
+              </Avatar>
+            </IconShell>
+        )}
       </ListItemSecondaryAction>
     </ListItem>
   );
