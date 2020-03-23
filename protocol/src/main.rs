@@ -1,16 +1,18 @@
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::time::{Duration, Instant};
-use std::collections::{HashMap, HashSet};
 
-use actix_rt;
 use actix::prelude::*;
+use actix_rt;
 use actix_web;
-use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
 
 use serde_derive::Deserialize;
+use serde_json::Value;
 
 // ---- Constants ----
 
@@ -71,7 +73,9 @@ struct Connect {
 /// Client disconnected
 #[derive(Message)]
 #[rtype(result = "()")]
-struct Disconnect { jid: String }
+struct Disconnect {
+    jid: String,
+}
 
 /// List connections
 struct ListClients;
@@ -94,7 +98,6 @@ struct ConfigClient {
 struct ClientCaps {
     caps: HashSet<String>,
 }
-
 
 // ----- Server Implementation ----
 
@@ -177,7 +180,11 @@ impl Handler<ConfigClient> for ChatServer {
     /// Save the capabilities received via ChatConnection
     fn handle(&mut self, msg: ConfigClient, _ctx: &mut Self::Context) {
         for cap in &msg.caps {
-            self.clients.get_mut(&msg.jid).unwrap().caps.insert(cap.clone());
+            self.clients
+                .get_mut(&msg.jid)
+                .unwrap()
+                .caps
+                .insert(cap.clone());
         }
     }
 }
@@ -282,16 +289,21 @@ impl Handler<Message> for ChatConnection {
 
 /// Handler for ws::Message message
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
-    fn handle(
-        &mut self,
-        msg: Result<ws::Message, ws::ProtocolError>,
-        ctx: &mut Self::Context,
-    ) {
+    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
-            Ok(ws::Message::Ping(msg))   => { self.heartbeat_update(); ctx.pong(&msg) },
-            Ok(ws::Message::Pong(_))     => { self.heartbeat_update(); },
-            Ok(ws::Message::Text(text))  => { self.handle_message(text); },
-            _                            => { ctx.stop(); },
+            Ok(ws::Message::Ping(msg)) => {
+                self.heartbeat_update();
+                ctx.pong(&msg)
+            }
+            Ok(ws::Message::Pong(_)) => {
+                self.heartbeat_update();
+            }
+            Ok(ws::Message::Text(text)) => {
+                self.handle_message(text);
+            }
+            _ => {
+                ctx.stop();
+            }
         }
     }
 }
@@ -353,7 +365,11 @@ async fn ws(
     server: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     if let Some(jid) = read_jid_from_request(&req) {
-        ws::start(ChatConnection::new(jid, server.get_ref().clone()), &req, stream)
+        ws::start(
+            ChatConnection::new(jid, server.get_ref().clone()),
+            &req,
+            stream,
+        )
     } else {
         Ok(HttpResponse::Unauthorized().finish())
     }
@@ -367,7 +383,7 @@ struct QueryAuthParams {
 /// Retrieve the auth token from the query string
 fn get_auth_token(req: &HttpRequest) -> Result<String, serde_qs::Error> {
     let qs: QueryAuthParams = serde_qs::from_str(req.query_string())?;
-    return Ok(qs.token)
+    Ok(qs.token)
 }
 
 /// Retrieve the `Authorization' header from the request's headers
@@ -388,7 +404,7 @@ fn decode_token_from_header(authorization: &str) -> String {
 fn read_jid_from_request(req: &HttpRequest) -> Option<String> {
     let token = match get_auth_token(req) {
         Ok(token) => token,
-        _ => decode_token_from_header(get_auth_header(req)?)
+        _ => decode_token_from_header(get_auth_header(req)?),
     };
     Some(token)
 }
@@ -446,14 +462,14 @@ async fn main() -> Result<(), io::Error> {
     let config: Config = load_config(&args)?;
     let addr = format!("{}:{}", config.http.host, config.http.port);
     let address = ChatServer::new().start();
-    let app = move || App::new()
-        .data(config.clone())
-        .data(address.clone())
-        .route("/ws", web::get().to(ws))
-        .route("/auth", web::post().to(auth))
-        .route("/clients", web::get().to(http_api_clients));
-    HttpServer::new(app)
-        .bind(addr)?
-        .run()
-        .await
+    let app = move || {
+        App::new()
+            .wrap(middleware::Logger::default())
+            .data(config.clone())
+            .data(address.clone())
+            .route("/ws", web::get().to(ws))
+            .route("/auth", web::post().to(auth))
+            .route("/clients", web::get().to(http_api_clients))
+    };
+    HttpServer::new(app).bind(addr)?.run().await
 }
