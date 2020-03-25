@@ -12,7 +12,7 @@ use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer, Res
 use actix_web_actors::ws;
 
 use serde_derive::Deserialize;
-use serde_json::Value;
+use serde_json::json;
 
 // ---- Constants ----
 
@@ -60,14 +60,14 @@ struct Config {
 /// Chat server sends this messages to session
 #[derive(Message)]
 #[rtype(result = "()")]
-struct Message(String);
+struct ProtoMessage(String);
 
 /// New client just connected
 #[derive(Message)]
 #[rtype(result = "()")]
 struct Connect {
     jid: String,
-    addr: Recipient<Message>,
+    addr: Recipient<ProtoMessage>,
 }
 
 /// Client disconnected
@@ -80,7 +80,7 @@ struct Disconnect {
 /// List connections
 struct ListClients;
 
-impl actix::Message for ListClients {
+impl Message for ListClients {
     type Result = HashMap<String, HashSet<String>>;
 }
 
@@ -92,11 +92,32 @@ struct ConfigClient {
     caps: HashSet<String>,
 }
 
-/// Container for client capabilities.  This is what each single
-/// ChatConnection actor receives from the client.
+/// Relay message to another user
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+struct RelayMessage {
+    /// From which jid the message is coming from
+    from_jid: String,
+    /// To which JID this message should be sent
+    to_jid: String,
+    /// The message to be sent. It's a JSON message but the client
+    /// receiving it should decode it, not the protocol server.
+    message: String,
+}
+
+/// Relay message format
 #[derive(Deserialize, Debug)]
-struct ClientCaps {
-    caps: HashSet<String>,
+struct RelayMsg {
+    to_jid: String,
+    message: String,
+}
+
+/// All the message types a ChatConnection can receive
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+enum ClientMessages {
+    Caps(HashSet<String>),
+    Send(RelayMsg),
 }
 
 // ----- Server Implementation ----
@@ -104,14 +125,14 @@ struct ClientCaps {
 /// Client data the server needs to keep track of
 #[derive(Clone)]
 struct ClientInfo {
-    addr: Recipient<Message>,
+    addr: Recipient<ProtoMessage>,
     caps: HashSet<String>,
 }
 
 impl ClientInfo {
     /// Construct an instance of the ClientInfo taking the address of
     /// the client received during connection time.
-    fn new(addr: Recipient<Message>) -> Self {
+    fn new(addr: Recipient<ProtoMessage>) -> Self {
         ClientInfo {
             addr: addr,
             caps: HashSet::<String>::new(),
@@ -189,6 +210,27 @@ impl Handler<ConfigClient> for ChatServer {
     }
 }
 
+impl Handler<RelayMessage> for ChatServer {
+    type Result = ();
+
+    /// Relay received message to a given client
+    fn handle(&mut self, msg: RelayMessage, _ctx: &mut Self::Context) {
+        match self.clients.get(&msg.to_jid) {
+            None => error!("Client {} not connected", msg.to_jid),
+            Some(client) => client
+                .addr
+                .do_send(ProtoMessage(
+                    json!({
+                        "from_jid": msg.from_jid,
+                        "message": msg.message
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        }
+    }
+}
+
 // ---- Chat Connection implementation ----
 
 /// Each new client instantiates a ChatConnection.  The `jid'
@@ -247,12 +289,23 @@ impl ChatConnection {
 
     /// Handle incoming messages from clients
     fn handle_message(&self, msg: String) {
-        info!("Receive caps from {}", self.jid);
-        let caps_object: ClientCaps = serde_json::from_str(msg.as_str()).unwrap();
-        self.server.do_send(ConfigClient {
-            jid: self.jid.clone(),
-            caps: caps_object.caps,
-        });
+        info!("Message from {}: {}", self.jid, msg);
+        let deserialize: Result<ClientMessages, serde_json::Error> =
+            serde_json::from_str(msg.as_str());
+        match deserialize {
+            Err(err) => error!("error parsing message from client: {:?}", err),
+            Ok(as_json) => match as_json {
+                ClientMessages::Caps(caps) => self.server.do_send(ConfigClient {
+                    jid: self.jid.clone(),
+                    caps: caps,
+                }),
+                ClientMessages::Send(send) => self.server.do_send(RelayMessage {
+                    from_jid: self.jid.clone(),
+                    to_jid: send.to_jid,
+                    message: send.message,
+                }),
+            },
+        }
     }
 }
 
@@ -279,10 +332,10 @@ impl Actor for ChatConnection {
 }
 
 /// Define the handler for messages from ChatServer.
-impl Handler<Message> for ChatConnection {
+impl Handler<ProtoMessage> for ChatConnection {
     type Result = ();
 
-    fn handle(&mut self, msg: Message, ctx: &mut Self::Context) {
+    fn handle(&mut self, msg: ProtoMessage, ctx: &mut Self::Context) {
         ctx.text(msg.0);
     }
 }
