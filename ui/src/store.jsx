@@ -10,6 +10,7 @@ const AuthState = {
 
 const initialState = {
   ws: null,
+  clientList: {},
   connectedTo: [],
   auth: {
     state: AuthState.Anonymous,
@@ -36,9 +37,44 @@ const createReducer = () => {
       return newState;
     }
 
-    case 'connect.to': {
+    // ---- connection with server ----
+
+    case 'srv.connect': {
+      const newState = { ...state };
+      const { ws, api } = action;
+      newState.ws = ws;
+      api.newState(newState);
+      api.bindWsEvents(ws);
+      return newState;
+    }
+    case 'srv.userList': {
+      const newState = { ...state };
+      newState.clientList = action.data;
+      return newState;
+    }
+    case 'srv.userConnected': {
+      const newState = { ...state };
+      const { jid, caps } = action.data;
+      newState.clientList[jid] = caps;
+      return newState;
+    }
+    case 'srv.userDisconnected': {
+      const newState = { ...state };
+      delete newState.clientList[action.data.jid];
+      return newState;
+    }
+
+    // ---- Calls ----
+
+    case 'm.connect': {
       const newState = { ...state };
       newState.connectedTo.push(action.data);
+      return newState;
+    }
+
+    case 'm.disconnect': {
+      const newState = { ...state };
+      newState.connectedTo = newState.connectedTo.filter(c => c !== action.data);
       return newState;
     }
 
@@ -105,11 +141,12 @@ class API {
     return authState;
   }
 
-  /** Retrieve the list of currently connected clients */
+  /** Retrieve the list of currently connected clients & updates the internal state */
   async listClients() {
     const response = await window.fetch('/api/clients');
     const allClients = await response.json();
     delete allClients[this.getBareJID()];
+    this.dispatch({ type: 'srv.userList', data: allClients });
     return allClients;
   }
 
@@ -118,9 +155,26 @@ class API {
     return this.state.connectedTo.length > 0;
   }
 
+  /** Returns true if we're currently connected to client wih JID */
+  isConnectedTo(jid) {
+    return this.state.connectedTo.includes(jid);
+  }
+
+  /** Return a list of all connected clients.
+   *
+   * This list includes clients that are still connectING. */
+  connectedClients() {
+    return this.state.connectedTo;
+  }
+
   /** Dispatch message to connect to a given client */
   connectTo(client) {
-    this.dispatch({ type: 'connect.to', data: client });
+    this.dispatch({ type: 'm.connect', data: client });
+  }
+
+  /** Dispatch message to disconnect from a given client */
+  disconnectFrom(client) {
+    this.dispatch({ type: 'm.disconnect', data: client });
   }
 
   /** Return the URL to connect to the WebSocket */
@@ -148,7 +202,17 @@ class API {
 
   /** Event triggered when the server sends this client a message */
   wsMessage(event) {
-    console.log('event', event);
+    if (event.type === "message") {
+      const { action, ...data } = JSON.parse(event.data);
+      switch (action) {
+      case 'connected':
+        this.dispatch({ type: 'srv.userConnected', data });
+        break;
+      case 'disconnected':
+        this.dispatch({ type: 'srv.userDisconnected', data });
+        break;
+      }
+    }
   }
 
   /** Connect to the WebSocket server & bind event callbacks */

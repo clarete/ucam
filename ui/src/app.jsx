@@ -111,23 +111,121 @@ function ClientItem({ primary, caps }) {
   );
 }
 
-function ListClientsScreen() {
-  const { api } = React.useContext(store);
-  const [clientList, setClientList] = React.useState({});
-  React.useEffect(() => {
-    api.listClients().then(clients => setClientList(clients));
-  }, []);
+const ClientCardShell = styled.div`
+  padding: 0px 10px 10px 10px;
+
+  & .canvasEl {
+    background-color: #aaa;
+    border-radius: 5px;
+  }
+`;
+
+function ClientCard({ client }) {
+  const canvasRef = React.useRef();
+  return (
+    <Paper>
+      <ClientCardShell>
+        <h2>{client}</h2>
+        <video className="canvasEl" ref={canvasRef} autoPlay={true} playsInline={true}></video>
+      </ClientCardShell>
+    </Paper>
+  );
+}
+
+function ConnectedClients({ list }) {
+  return (
+    <Grid container justify="center" spacing={2}>
+      {list.map((c) =>
+        <Grid item key={`connected-client-${c}`}>
+          <ClientCard client={c} />
+        </Grid>)}
+    </Grid>
+  );
+}
+
+function NoClientConnectedMessage() {
+  return (
+    <Typography component="h1" variant="h5" color="textSecondary">
+      Click in one of the clients listed on the left
+    </Typography>
+  );
+}
+
+function NobodyToTalkMessage() {
   return (
     <CenterCenterShell>
-      <Container component="main" maxWidth="xs">
-        <h1>What do you want to see</h1>
-        <List>
-          {Object.entries(clientList).map(([jid, caps], i) =>
-            <div key={`key-client-${jid}`}>
-              <ClientItem primary={jid} caps={caps} />
-              <Divider component="li" />
-            </div>)}
-        </List>
+      <Typography component="h1" variant="h5" color="textSecondary">
+        No client is connected to the server
+      </Typography>
+    </CenterCenterShell>
+  );
+}
+
+
+const ListClientScreenShell = styled.div`
+  display: grid;
+  background-color: #eee;
+  border-radius: 10px;
+  min-height: 25vh;
+  padding: 10px;
+  margin: 0;
+  place-items: center center;
+`;
+
+function ListClientsScreen() {
+  const { api } = React.useContext(store);
+  const [loading, setLoading] = React.useState(true);
+  const [clientList, setClientList] = React.useState({});
+  const [connectedClients, setConnectedClients] = React.useState([]);
+  // Feed the initial list of available clients
+  React.useEffect(() => {
+    api.listClients().then(clients => {
+      setClientList(clients);
+      setLoading(false);
+    });
+  }, []);
+
+  // Update the list of available clients upon websocket event
+  React.useEffect(() => {
+    setClientList(api.state.clientList);
+  }, [api.state.clientList]);
+
+  // Feed the list of already connected (or connecting) clients
+  React.useEffect(() => {
+    setConnectedClients(api.connectedClients());
+  }, [api.state.connectedTo]);
+
+  if (loading)
+    return <Loading />;
+
+  if (Object.entries(clientList).length === 0)
+    return <NobodyToTalkMessage />
+
+  return (
+    <CenterCenterShell>
+      <Container component="main" maxWidth="lg">
+        <Grid container spacing={8}>
+          <Grid item xs={12}>
+            <h1>What do you want to see</h1>
+          </Grid>
+
+          <Grid item xs={4}>
+            <List>
+              {Object.entries(clientList).map(([jid, caps], i) =>
+                <div key={`key-client-${jid}`}>
+                  <ClientItem primary={jid} caps={caps.sort()} />
+                  <Divider component="li" />
+                </div>)}
+            </List>
+          </Grid>
+
+          <Grid item xs={8}>
+            <ListClientScreenShell>
+              {connectedClients.length === 0 && <NoClientConnectedMessage />}
+              {connectedClients.length > 0 && <ConnectedClients list={connectedClients} />}
+            </ListClientScreenShell>
+          </Grid>
+        </Grid>
       </Container>
     </CenterCenterShell>
   );
