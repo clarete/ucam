@@ -11,7 +11,7 @@ use actix_web;
 use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
 
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
 
 // ---- Constants ----
@@ -58,9 +58,17 @@ struct Config {
 // ---- Protocol messages for chat client-server communication ----
 
 /// Chat server sends this messages to session
-#[derive(Message)]
+#[derive(Clone, Debug, Message)]
 #[rtype(result = "()")]
 struct ProtoMessage(String);
+
+/// Implement formatting so ProtoMessage can be printed out
+impl std::fmt::Display for ProtoMessage {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::result::Result<(), std::fmt::Error> {
+        fmt.write_str(self.0.as_str())?;
+        Ok(())
+    }
+}
 
 /// New client just connected
 #[derive(Message)]
@@ -112,6 +120,20 @@ struct RelayMsg {
     message: String,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+enum UserListUpdateAction {
+    Connected,
+    Disconnected,
+}
+
+/// Inform users of updates to the roster
+#[derive(Serialize, Deserialize, Debug)]
+struct UserListUpdate {
+    action: UserListUpdateAction,
+    jid: String,
+}
+
 /// All the message types a ChatConnection can receive
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -153,6 +175,15 @@ impl ChatServer {
             clients: HashMap::new(),
         }
     }
+
+    fn broadcast(&mut self, msg: ProtoMessage) {
+        for (key, client) in &self.clients {
+            match client.addr.do_send(msg.clone()) {
+                Ok(_) => debug!("Broadcast to client {}: {}", key, msg.clone()),
+                Err(e) => error!("Couldn't message client {}: {}", key, e),
+            }
+        }
+    }
 }
 
 /// Make actor from `ChatServer`
@@ -169,6 +200,15 @@ impl Handler<Connect> for ChatServer {
 
     /// Insert the newly connected client into the clients hash table.
     fn handle(&mut self, msg: Connect, _ctx: &mut Self::Context) {
+        // First inform the currently connected clients about the
+        // event
+        let user_msg = UserListUpdate {
+            action: UserListUpdateAction::Connected,
+            jid: msg.jid.clone(),
+        };
+        let user_msg_str = serde_json::to_string(&user_msg).unwrap();
+        self.broadcast(ProtoMessage(user_msg_str));
+        // Finally update the clients list
         self.clients.insert(msg.jid, ClientInfo::new(msg.addr));
     }
 }
@@ -178,7 +218,16 @@ impl Handler<Disconnect> for ChatServer {
 
     /// Remove client a connection from the clients hash table.
     fn handle(&mut self, msg: Disconnect, _ctx: &mut Self::Context) {
+        // First update the clients list
         self.clients.remove(&msg.jid);
+        // Then finally inform the currently connected clients about
+        // the event
+        let user_msg = UserListUpdate {
+            action: UserListUpdateAction::Disconnected,
+            jid: msg.jid.clone(),
+        };
+        let user_msg_str = serde_json::to_string(&user_msg).unwrap();
+        self.broadcast(ProtoMessage(user_msg_str));
     }
 }
 
