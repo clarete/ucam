@@ -150,11 +150,6 @@ class API {
     return allClients;
   }
 
-  /** Return true if this client is connected to any other client */
-  isConnectedToSomeone() {
-    return this.state.connectedTo.length > 0;
-  }
-
   /** Returns true if we're currently connected to client wih JID */
   isConnectedTo(jid) {
     return this.state.connectedTo.includes(jid);
