@@ -70,9 +70,11 @@ function ClientItem({ primary, caps }) {
     : api.connectTo(primary);
   return (
     <ListItem button component="li" onClick={handleItemClick}>
-      <ListItemText primary={primary} />
+      <ListItemText
+        primary={primary}
+        style={{ overflow: 'hidden', textOverflow: 'ellipsis', marginRight: 20 }}
+      />
       <ListItemSecondaryAction>
-
         {isConnectedTo &&
          <IconShell>
            <Avatar>
@@ -128,7 +130,7 @@ function ConnectedClients({ list }) {
 
 function NoClientConnectedMessage() {
   return (
-    <Typography component="h1" variant="h5" color="textSecondary">
+    <Typography component="h1" variant="h5" color="textSecondary" align="center">
       Click in one of the clients listed on the left
     </Typography>
   );
