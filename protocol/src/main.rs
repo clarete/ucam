@@ -132,6 +132,7 @@ enum UserListUpdateAction {
 struct UserListUpdate {
     action: UserListUpdateAction,
     jid: String,
+    caps: Option<HashSet::<String>>,
 }
 
 /// All the message types a ChatConnection can receive
@@ -176,8 +177,14 @@ impl ChatServer {
         }
     }
 
-    fn broadcast(&mut self, msg: ProtoMessage) {
+    fn broadcast(&mut self, msg: ProtoMessage, exclude_jid: Option<String>) {
         for (key, client) in &self.clients {
+            if let Some(excluded) = &exclude_jid {
+                if *key == *excluded {
+                    continue;
+                }
+            }
+
             match client.addr.do_send(msg.clone()) {
                 Ok(_) => debug!("Broadcast to client {}: {}", key, msg.clone()),
                 Err(e) => error!("Couldn't message client {}: {}", key, e),
@@ -200,15 +207,6 @@ impl Handler<Connect> for ChatServer {
 
     /// Insert the newly connected client into the clients hash table.
     fn handle(&mut self, msg: Connect, _ctx: &mut Self::Context) {
-        // First inform the currently connected clients about the
-        // event
-        let user_msg = UserListUpdate {
-            action: UserListUpdateAction::Connected,
-            jid: msg.jid.clone(),
-        };
-        let user_msg_str = serde_json::to_string(&user_msg).unwrap();
-        self.broadcast(ProtoMessage(user_msg_str));
-        // Finally update the clients list
         self.clients.insert(msg.jid, ClientInfo::new(msg.addr));
     }
 }
@@ -225,9 +223,10 @@ impl Handler<Disconnect> for ChatServer {
         let user_msg = UserListUpdate {
             action: UserListUpdateAction::Disconnected,
             jid: msg.jid.clone(),
+            caps: None,
         };
         let user_msg_str = serde_json::to_string(&user_msg).unwrap();
-        self.broadcast(ProtoMessage(user_msg_str));
+        self.broadcast(ProtoMessage(user_msg_str), None);
     }
 }
 
@@ -249,6 +248,15 @@ impl Handler<ConfigClient> for ChatServer {
 
     /// Save the capabilities received via ChatConnection
     fn handle(&mut self, msg: ConfigClient, _ctx: &mut Self::Context) {
+        // Finally update the clients list
+        let user_msg = UserListUpdate {
+            action: UserListUpdateAction::Connected,
+            jid: msg.jid.clone(),
+            caps: Some(msg.caps.clone()),
+        };
+        let user_msg_str = serde_json::to_string(&user_msg).unwrap();
+        self.broadcast(ProtoMessage(user_msg_str), Some(msg.jid.clone()));
+
         for cap in &msg.caps {
             self.clients
                 .get_mut(&msg.jid)
