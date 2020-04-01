@@ -2,6 +2,7 @@
 extern crate log;
 #[macro_use]
 extern crate anyhow;
+extern crate tokio;
 
 use anyhow::Error;
 // use std::collections::{HashMap, HashSet};
@@ -11,19 +12,6 @@ use std::time::Duration;
 
 use actix::io::SinkWrite;
 use actix::prelude::*;
-use actix::{
-    Actor,
-    ActorContext,
-    Arbiter,
-    AsyncContext,
-    Context,
-    Handler,
-    Message,
-    StreamHandler,
-    // Supervised,
-    System,
-};
-
 use actix_codec::Framed;
 use awc::{
     error::WsProtocolError,
@@ -32,17 +20,14 @@ use awc::{
 };
 use bytes::Bytes;
 use futures::stream::{SplitSink, StreamExt};
-//use futures::channel::oneshot;
-
-extern crate tokio;
-
 use tokio::sync::oneshot;
 
 use serde_derive::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use gst::gst_element_error;
+// use gst::gst_element_error;
 use gst::prelude::*;
+use gst_webrtc::{WebRTCSDPType, WebRTCSessionDescription};
 
 const STUN_SERVER: &str = "stun://stun.l.google.com:19302";
 const TURN_SERVER: &str = "turn://foo:bar@webrtc.nirbheek.in:3478";
@@ -158,7 +143,7 @@ async fn main() -> Result<(), Error> {
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<String, Error>")]
+#[rtype(result = "Result<Option<String>, Error>")]
 struct GstAppCmd {
     from_jid: String,
     message: ClientMessage,
@@ -171,104 +156,168 @@ struct GstElements {
 
 // type GstAppClients = HashMap<String, Arc<GstElements>>;
 type GstAppClients = Arc<GstElements>;
+type WeakAppClients = Weak<GstElements>;
 
 struct GstApp {
     gst_elements: Option<GstAppClients>,
     chat_client: Option<Recipient<ClientCommand>>,
 }
 
-type WeakAppClients = Weak<GstElements>;
+fn gst_on_answer_created(
+    elements: WeakAppClients,
+    reply: Result<&gst::StructureRef, gst::PromiseError>,
+) -> Result<String, Error> {
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(err) => {
+            bail!("Answer creation future got no reponse: {:?}", err);
+        }
+    };
+
+    let elements = elements.upgrade().expect("Can't get reference");
+
+    let answer = reply
+        .get_value("answer")
+        .unwrap()
+        .get::<WebRTCSessionDescription>()
+        .expect("Invalid argument")
+        .unwrap();
+    elements
+        .webrtcbin
+        .emit("set-local-description", &[&answer, &None::<gst::Promise>])
+        .unwrap();
+
+    Ok(serde_json::to_string(&ClientMessage::Sdp {
+        type_: "answer".to_string(),
+        sdp: answer.get_sdp().as_text().unwrap(),
+    })?)
+}
+
+fn gst_on_offer_created(
+    elements: WeakAppClients,
+    reply: Result<&gst::StructureRef, gst::PromiseError>,
+) -> Result<String, Error> {
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(err) => {
+            bail!("Answer creation future got no reponse: {:?}", err);
+        }
+    };
+
+    let elements = elements.upgrade().expect("Can't get reference");
+
+    let offer = reply
+        .get_value("offer")
+        .unwrap()
+        .get::<WebRTCSessionDescription>()
+        .expect("Invalid argument")
+        .unwrap();
+    elements
+        .webrtcbin
+        .emit("set-local-description", &[&offer, &None::<gst::Promise>])
+        .unwrap();
+
+    debug!(
+        "sending SDP offer to peer: {}",
+        offer.get_sdp().as_text().unwrap()
+    );
+
+    Ok(serde_json::to_string(&ClientMessage::Sdp {
+        type_: "offer".to_string(),
+        sdp: offer.get_sdp().as_text().unwrap(),
+    })?)
+}
+
+async fn gst_on_negotiation_needed(elements: WeakAppClients) -> Result<String, Error> {
+    let (sender, receiver) = oneshot::channel::<Result<String, Error>>();
+    let strong = elements.upgrade().expect("Can't get reference");
+
+    let promise = gst::Promise::new_with_change_func(move |reply| {
+        match gst_on_offer_created(elements, reply) {
+            Ok(answer) => sender.send(Ok(answer)).unwrap(),
+            Err(error) => error!("Couldn't create answer: {}", error),
+        }
+    });
+
+    strong
+        .webrtcbin
+        .emit("create-offer", &[&None::<gst::Structure>, &promise])
+        .unwrap();
+
+    receiver.await.unwrap()
+}
 
 async fn gst_handle_sdp(
     elements: WeakAppClients,
-    from_jid: &str,
     type_: &str,
     sdp: &str,
-) -> Result<String, Error> {
+) -> Result<Option<String>, Error> {
     info!("Handle SDP {}", type_);
+    let ret = gst_sdp::SDPMessage::parse_buffer(sdp.as_bytes())
+        .map_err(|_| anyhow!("Failed to parse SDP answer"))?;
+    let strong = elements.upgrade().expect("Can't get reference");
 
-    if type_ == "offer" {
-        let ret = gst_sdp::SDPMessage::parse_buffer(sdp.as_bytes())
-            .map_err(|_| anyhow!("Failed to parse SDP offer"))?;
+    if type_ == "answer" {
+        let answer = WebRTCSessionDescription::new(WebRTCSDPType::Answer, ret);
+        strong
+            .webrtcbin
+            .emit("set-remote-description", &[&answer, &None::<gst::Promise>])?;
+        Ok(None)
+    } else if type_ == "offer" {
+        let (sender, receiver) = oneshot::channel::<Result<String, Error>>();
 
-        debug!("{}", ret);
-
-        let (answer_sent_tx, answer_sent_rx) = oneshot::channel::<String>();
-
-        let strong = elements.upgrade().expect("Can't get reference");
-
-        strong.pipeline.call_async(move |pipeline| {
-            println!("00002");
-
-            let offer = gst_webrtc::WebRTCSessionDescription::new(
-                gst_webrtc::WebRTCSDPType::Offer,
-                ret,
-            );
-
+        strong.pipeline.call_async(move |_pipeline| {
+            let offer = WebRTCSessionDescription::new(WebRTCSDPType::Offer, ret);
             let strong = elements.upgrade().expect("Can't get reference");
-
-            println!("00003");
-
             strong
                 .webrtcbin
                 .emit("set-remote-description", &[&offer, &None::<gst::Promise>])
                 .unwrap();
-
             // Promise that manages the reply tothe `create-element`
             // event on the webrtcbin element right below this
             // declaration.
             let promise = gst::Promise::new_with_change_func(move |reply| {
-
-                println!("00005");
-
-                let strong = elements.upgrade().expect("Can't get reference");
-
-                let reply = reply.unwrap();
-                let answer = reply
-                    .get_value("answer")
-                    .unwrap()
-                    .get::<gst_webrtc::WebRTCSessionDescription>()
-                    .expect("Invalid argument")
-                    .unwrap();
-                strong.webrtcbin
-                    .emit("set-local-description", &[&answer, &None::<gst::Promise>])
-                    .unwrap();
-
-                println!("SEEEEND");
-                answer_sent_tx.send("Stuff".to_string()).unwrap();
+                match gst_on_answer_created(elements, reply) {
+                    Ok(answer) => sender.send(Ok(answer)).unwrap(),
+                    Err(error) => error!("Couldn't create answer: {}", error),
+                }
             });
-
             strong
                 .webrtcbin
                 .emit("create-answer", &[&None::<gst::Structure>, &promise])
                 .unwrap();
         });
-        println!("00001");
-        let res: String = answer_sent_rx.await.unwrap();
-        Ok(res)
+        Ok(Some(receiver.await??))
     } else {
         bail!("Don't know what I'm doing")
     }
 }
 
+fn gst_handle_ice(
+    elements: WeakAppClients,
+    candidate: String,
+    sdp_mline_index: u32,
+) -> Result<Option<String>, Error> {
+    info!("Handle ICE message: {}", candidate);
+    let elements = elements.upgrade().expect("Can't get reference");
+    elements
+        .webrtcbin
+        .emit("add-ice-candidate", &[&sdp_mline_index, &candidate])?;
+    Ok(None)
+}
+
 async fn gst_handle_message(
     elements: WeakAppClients,
     envelope: GstAppCmd,
-) -> Result<String, Error> {
+) -> Result<Option<String>, Error> {
     match envelope.message {
-        ClientMessage::Sdp { type_, sdp } => Ok(gst_handle_sdp(
-            elements,
-            envelope.from_jid.as_str(),
-            type_.as_str(),
-            sdp.as_str(),
-        )
-        .await?),
+        ClientMessage::Sdp { type_, sdp } => {
+            gst_handle_sdp(elements, type_.as_str(), sdp.as_str()).await
+        }
         ClientMessage::Ice {
             candidate,
             sdp_mline_index,
-        } => {
-            Ok("ICE FOO".to_string()) // self.handle_ice(envelope.from_jid.as_str(), candidate.as_str(), sdp_mline_index);
-        }
+        } => gst_handle_ice(elements, candidate, sdp_mline_index),
     }
 }
 
@@ -321,7 +370,6 @@ impl Default for GstApp {
     }
 }
 
-
 impl Actor for GstApp {
     type Context = Context<Self>;
 }
@@ -332,10 +380,12 @@ struct ChatClient {
 }
 
 impl Handler<GstAppCmd> for GstApp {
-    type Result = ResponseActFuture<Self, Result<String, Error>>;
+    type Result = ResponseActFuture<Self, Result<Option<String>, Error>>;
 
     fn handle(&mut self, envelope: GstAppCmd, _ctx: &mut Context<Self>) -> Self::Result {
-        match self.add_client(&envelope.from_jid) {
+        let sender = envelope.from_jid.clone();
+
+        match self.add_client(&sender) {
             Ok(_) => info!("Client registered"),
             Err(error) => return Box::new(async move { bail!(error) }.into_actor(self)),
         }
@@ -344,10 +394,12 @@ impl Handler<GstAppCmd> for GstApp {
             let weak = Arc::downgrade(&elements);
 
             Box::new(gst_handle_message(weak, envelope).into_actor(self).map(
-                |res: Result<String, Error>, _act, _ctx| {
-                    let stuff = res.unwrap();
-                    println!("{}", stuff);
-                    Ok(stuff)
+                move |res: Result<Option<String>, Error>, _act, _ctx| match res.unwrap() {
+                    None => Ok(None),
+                    Some(data) => {
+                        println!("TO BE SENT to {}: {}", sender, data);
+                        Ok(None)
+                    }
                 },
             ))
         } else {
