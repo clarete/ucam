@@ -64,6 +64,9 @@ const createReducer = () => {
       return newState;
     }
 
+    case 'srv.relay': {
+    }
+
     // ---- Calls ----
 
     case 'm.connect': {
@@ -196,17 +199,30 @@ class API {
   }
 
   /** Event triggered when the server sends this client a message */
-  wsMessage(event) {
-    if (event.type === "message") {
-      const { action, ...data } = JSON.parse(event.data);
-      switch (action) {
-      case 'connected':
-        this.dispatch({ type: 'srv.userConnected', data });
-        break;
-      case 'disconnected':
-        this.dispatch({ type: 'srv.userDisconnected', data });
-        break;
-      }
+  wsMessage(e) {
+    if (e.type === "message") {
+      const event = JSON.parse(e.data);
+      // Server notifying this client about a new client connection
+      if (event.clientconnected)
+        this.dispatch({
+          type: 'srv.userConnected',
+          data: event.clientconnected,
+        });
+      // Server notifying this client about a client disconnection
+      else if (event.clientdisconnected)
+        this.dispatch({
+          type: 'srv.userDisconnected',
+          data: event.clientdisconnected,
+        });
+      // Server relaying a message from another client
+      else if (event.from_jid)
+        this.dispatch({
+          type: 'srv.relay',
+          data: event.message,
+        });
+      // Don't know what to do with this
+      else
+        console.error("Unknown message", event);
     }
   }
 
