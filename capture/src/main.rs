@@ -1,9 +1,8 @@
-use std::{
-    sync::mpsc::{channel, Sender},
-    sync::{Arc, Mutex},
-    thread,
-    time::Duration,
-};
+use std::collections::HashSet;
+use std::sync::mpsc::{channel, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 #[macro_use]
 extern crate log;
@@ -12,13 +11,13 @@ use bytes::Bytes;
 #[macro_use]
 extern crate failure;
 use failure::{Error, Fail};
+use futures::channel::mpsc;
 use futures::stream::{SplitSink, StreamExt};
 
 //use glib;
 use gst::{self, prelude::*};
 use lazy_static::lazy_static;
 use serde_derive::{Deserialize, Serialize};
-use serde_json::json;
 
 use actix::io::SinkWrite;
 use actix::*;
@@ -89,7 +88,7 @@ struct Sdp {
 macro_rules! pipeline {
     ($name:expr) => {
         $name
-            .0
+            .pipeline
             .lock()
             .unwrap()
             .downcast_ref::<gst::Pipeline>()
@@ -117,9 +116,9 @@ fn on_answer_created(
     Ok(())
 }
 
-fn add_peer_to_pipeline(context: StrongContext, peer_id: &str) -> Result<(), Error> {
+fn add_peer_to_pipeline(context: StrongContext, peer_id: String) -> Result<(), Error> {
     let queue = gst::ElementFactory::make("queue", None)?;
-    let webrtcbin = gst::ElementFactory::make("webrtcbin", Some(peer_id))?;
+    let webrtcbin = gst::ElementFactory::make("webrtcbin", Some(&peer_id))?;
     pipeline!(context).add_many(&[&queue, &webrtcbin])?;
 
     let queue_src = queue.get_static_pad("src").ok_or(NullPad("queue_src"))?;
@@ -138,11 +137,38 @@ fn add_peer_to_pipeline(context: StrongContext, peer_id: &str) -> Result<(), Err
     queue.sync_state_with_parent()?;
     webrtcbin.sync_state_with_parent()?;
 
+    let chann = context.ws_chann;
+
+    webrtcbin.connect("on-ice-candidate", false, move |values| {
+        let mlineindex = values[1].get_some::<u32>().expect("Invalid argument");
+        let candidate = values[2]
+            .get::<String>()
+            .expect("Invalid argument")
+            .unwrap();
+        let message = serde_json::to_string(&ProtocolMessage::Ice {
+            candidate,
+            sdp_mline_index: mlineindex,
+        })
+        .unwrap();
+        chann
+            .lock()
+            .unwrap()
+            .unbounded_send(ClientMessages::Relay(RelayMsg {
+                to_jid: peer_id.clone(),
+                message: message,
+            }))
+            .unwrap();
+
+        None
+    })?;
     Ok(())
 }
 
 #[derive(Clone)]
-struct StrongContext(Arc<Mutex<dyn std::any::Any + 'static>>);
+struct StrongContext {
+    pipeline: Arc<Mutex<dyn std::any::Any + 'static>>,
+    ws_chann: Arc<Mutex<mpsc::UnboundedSender<ClientMessages>>>,
+}
 
 unsafe impl Send for StrongContext {}
 
@@ -151,53 +177,62 @@ fn handle_ice(
     peer_id: &String,
     candidate: String,
     sdp_mline_index: u32,
-) -> Result<Option<String>, Error> {
+) -> Result<(), Error> {
     info!("Handle ICE from {}", peer_id);
     let webrtcbin = pipeline!(context)
         .get_by_name(peer_id)
         .ok_or(NullElement("webrtcbin"))?;
     webrtcbin.emit("add-ice-candidate", &[&sdp_mline_index, &candidate])?;
-    Ok(None)
+    Ok(())
 }
 
 fn handle_sdp(
     pipeline: StrongContext,
-    peer_id: &String,
+    peer_id: String,
     type_: &str,
     sdp: &str,
-) -> Result<Option<String>, Error> {
+) -> Result<(), Error> {
     info!("Handle SDP {} from {}", type_, peer_id);
 
-    add_peer_to_pipeline(pipeline.clone(), peer_id)?;
+    add_peer_to_pipeline(pipeline.clone(), peer_id.clone())?;
 
     if type_ == "offer" {
-        Ok(Some(handle_sdp_offer(pipeline, sdp, peer_id)?))
+        handle_sdp_offer(pipeline, sdp, &peer_id)
     } else {
         println!(r#"Sdp type is not "offer""#);
-        Ok(None)
+        Ok(())
     }
 }
 
-fn handle_sdp_offer(context: StrongContext, sdp: &str, peer_id: &String) -> Result<String, Error> {
+fn handle_sdp_offer(context: StrongContext, sdp: &str, peer_id: &String) -> Result<(), Error> {
     let msg = gst_sdp::SDPMessage::parse_buffer(sdp.as_bytes()).unwrap();
     let offer = gst_webrtc::WebRTCSessionDescription::new(gst_webrtc::WebRTCSDPType::Offer, msg);
     let webrtcbin = pipeline!(context).get_by_name(peer_id).unwrap();
     webrtcbin.emit("set-remote-description", &[&offer, &None::<gst::Promise>])?;
 
     let (answer_sender, answer_receiver) = channel();
-    let peer_id = peer_id.clone();
+    let peer_id_copy = peer_id.clone();
+    let clone = context.clone();
     let promise = &gst::Promise::new_with_change_func(move |reply| {
-        on_answer_created(context, peer_id, reply, answer_sender).unwrap();
+        on_answer_created(clone, peer_id_copy, reply, answer_sender).unwrap();
     });
     webrtcbin.emit("create-answer", &[&None::<gst::Structure>, &promise])?;
 
     let answer: gst_webrtc::WebRTCSessionDescription = answer_receiver.recv()?;
-    let msg = serde_json::to_string(&Sdp {
+    let message = serde_json::to_string(&ProtocolMessage::Sdp {
         type_: "answer".to_string(),
-        data: answer.get_sdp().as_text()?,
+        sdp: answer.get_sdp().as_text()?,
     })?;
 
-    Ok(msg)
+    context
+        .ws_chann
+        .lock()
+        .unwrap()
+        .unbounded_send(ClientMessages::Relay(RelayMsg {
+            to_jid: peer_id.clone(),
+            message: message,
+        }))?;
+    Ok(())
 }
 
 fn check_plugins() -> Result<(), Error> {
@@ -300,29 +335,32 @@ fn main() -> Result<(), Error> {
 
     init_pipeline(&pipeline)?;
 
+    let (gst_sender, gst_receiver) = mpsc::unbounded::<ClientMessages>();
+
+    // Enqueue the first message to be sent upon connection
+    let mut caps = HashSet::new();
+    caps.insert("s:video".to_string());
+    caps.insert("s:audio".to_string());
+    caps.insert("r:audio".to_string());
+    gst_sender.unbounded_send(ClientMessages::Caps(caps))?;
+
     thread::spawn(|| {
         let sys = System::new("websocket-client");
 
         Arbiter::spawn(async {
             let framed = get_ws_client().await.unwrap();
             let (sink, stream) = framed.split();
-            let addr = ChatClient::create(|ctx| {
+            ChatClient::create(|ctx| {
                 ChatClient::add_stream(stream, ctx);
+                ChatClient::add_stream(gst_receiver, ctx);
                 ChatClient {
                     framed: SinkWrite::new(sink, ctx),
-                    pipeline: StrongContext(Arc::new(Mutex::new(pipeline))),
+                    context: StrongContext {
+                        pipeline: Arc::new(Mutex::new(pipeline)),
+                        ws_chann: Arc::new(Mutex::new(gst_sender)),
+                    },
                 }
             });
-            addr.do_send(ClientCommand(
-                json!({
-                    "caps": [
-                        "s:video",
-                        "s:audio",
-                        "r:audio",
-                    ]
-                })
-                .to_string(),
-            ));
         });
 
         sys.run().unwrap();
@@ -349,20 +387,34 @@ enum ProtocolMessage {
     },
 }
 
+/// Structure for parsing messages received from server
 #[derive(Debug, Deserialize, Serialize)]
 struct Envelope {
     from_jid: String,
     message: ProtocolMessage,
 }
 
-struct ChatClient {
-    framed: SinkWrite<Message, SplitSink<Framed<BoxedSocket, Codec>, Message>>,
-    pipeline: StrongContext,
+/// Relay message format
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+struct RelayMsg {
+    to_jid: String,
+    message: String,
 }
 
-#[derive(Message)]
-#[rtype(result = "()")]
-struct ClientCommand(String);
+/// All the message types a ChatConnection can receive
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+//#[rtype(result = "()")]
+enum ClientMessages {
+    Caps(HashSet<String>),
+    Relay(RelayMsg),
+}
+
+struct ChatClient {
+    framed: SinkWrite<Message, SplitSink<Framed<BoxedSocket, Codec>, Message>>,
+    context: StrongContext,
+}
 
 impl Actor for ChatClient {
     type Context = Context<Self>;
@@ -396,22 +448,16 @@ impl ChatClient {
     fn handle_text_message(&mut self, txt: &Bytes) -> Result<(), Error> {
         let utf8 = std::str::from_utf8(txt)?;
         let envelope: Envelope = serde_json::from_str(utf8)?;
-        let pipeline = self.pipeline.clone();
-        let answer = match envelope.message {
+        let context = self.context.clone();
+        match envelope.message {
             ProtocolMessage::Sdp { type_, sdp } => {
-                handle_sdp(pipeline, &envelope.from_jid, &type_, &sdp)?
+                handle_sdp(context, envelope.from_jid, &type_, &sdp)?
             }
             ProtocolMessage::Ice {
                 sdp_mline_index,
                 candidate,
-            } => handle_ice(pipeline, &envelope.from_jid, candidate, sdp_mline_index)?,
+            } => handle_ice(context, &envelope.from_jid, candidate, sdp_mline_index)?,
         };
-
-        if let Some(text) = answer {
-            println!("ANSWER THAT SHOULD GO OUT: {}", text);
-            self.framed.write(Message::Text(text)).unwrap();
-        }
-
         Ok(())
     }
 
@@ -439,12 +485,12 @@ impl ChatClient {
     }
 }
 
-/// Handle stdin commands
-impl Handler<ClientCommand> for ChatClient {
-    type Result = ();
-
-    fn handle(&mut self, msg: ClientCommand, _ctx: &mut Context<Self>) {
-        self.framed.write(Message::Text(msg.0)).unwrap();
+/// Handles messages from the GstApp actor to be forwarded via the
+/// websocket client.
+impl StreamHandler<ClientMessages> for ChatClient {
+    fn handle(&mut self, msg: ClientMessages, _: &mut Context<Self>) {
+        let json_text = serde_json::to_string(&msg).unwrap();
+        self.framed.write(Message::Text(json_text)).unwrap();
     }
 }
 
