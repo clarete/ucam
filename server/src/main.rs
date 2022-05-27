@@ -10,6 +10,7 @@ use actix_rt;
 use actix_web;
 use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 use serde_derive::{Deserialize, Serialize};
 
@@ -44,6 +45,9 @@ struct ConfigLocation {
 struct ConfigHTTP {
     host: String,
     port: u16,
+    key: String,
+    cert: String,
+    cacert: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -115,16 +119,6 @@ struct RelayMessage {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum ProtocolMessage {
-    Ice {
-        candidate: String,
-        #[serde(rename = "sdpMLineIndex")]
-        sdp_mline_index: u32,
-    },
-    Sdp {
-        #[serde(rename = "type")]
-        type_: String,
-        sdp: String,
-    },
     ClientConnected {
         jid: String,
         caps: HashSet<String>,
@@ -179,6 +173,7 @@ struct ChatServer {
 
 impl ChatServer {
     fn new() -> Self {
+        debug!("New ProtocolServer created");
         Self {
             clients: HashMap::new(),
         }
@@ -416,6 +411,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
                 self.handle_message(text);
             }
             _ => {
+                error!("Something unexpected came along");
                 ctx.stop();
             }
         }
@@ -479,11 +475,8 @@ async fn ws(
     server: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     if let Some(jid) = read_jid_from_request(&req) {
-        ws::start(
-            ChatConnection::new(jid, server.get_ref().clone()),
-            &req,
-            stream,
-        )
+        let client = ChatConnection::new(jid, server.get_ref().clone());
+        ws::start(client, &req, stream)
     } else {
         Ok(HttpResponse::Unauthorized().finish())
     }
@@ -571,20 +564,32 @@ fn load_config(args: &Vec<String>) -> Result<Config, ChatError> {
 
 #[actix_rt::main]
 async fn main() -> Result<(), io::Error> {
-    ::std::env::set_var("RUST_LOG", "protocol=debug,actix=debug,actix_web=debug");
     env_logger::init();
     let args: Vec<String> = std::env::args().collect();
     let config: Config = load_config(&args)?;
-    let addr = format!("{}:{}", config.http.host, config.http.port);
-    let address = ChatServer::new().start();
+    let bind_addr = format!("{}:{}", config.http.host, config.http.port);
+
+    // Build SSL context
+    let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
+    builder.set_private_key_file(&config.http.key, SslFiletype::PEM)?;
+    builder.set_certificate_chain_file(&config.http.cert)?;
+    builder.set_ca_file(&config.http.cacert)?;
+
+    // Address for the server actor
+    let server_actor = ChatServer::new().start();
+
+    // Spin it all up
     let app = move || {
         App::new()
             .wrap(middleware::Logger::default())
             .data(config.clone())
-            .data(address.clone())
+            .data(server_actor.clone())
             .route("/ws", web::get().to(ws))
             .route("/auth", web::post().to(auth))
             .route("/clients", web::get().to(http_api_clients))
     };
-    HttpServer::new(app).bind(addr)?.run().await
+    HttpServer::new(app)
+        .bind_openssl(bind_addr, builder)?
+        .run()
+        .await
 }
