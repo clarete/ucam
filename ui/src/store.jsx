@@ -11,7 +11,8 @@ const AuthState = {
 const initialState = {
   ws: null,
   clientList: {},
-  connectedTo: [],
+  connectedTo: {},
+  peerConnections: {},
   auth: {
     state: AuthState.Anonymous,
     user: null,
@@ -22,7 +23,13 @@ const store = createContext(initialState);
 
 const createReducer = () => {
   return (state, action) => {
+    // Debug what's gonna happen to state
+    const { type, ...debug } = action;
+    console.log(`STATE: ${type.padEnd(20)}: ${JSON.stringify(debug)}`);
+
     switch (action.type) {
+
+    // ---- authentication ----
 
     case 'auth.state': {
       const newState = { ...state };
@@ -41,10 +48,9 @@ const createReducer = () => {
 
     case 'srv.connect': {
       const newState = { ...state };
-      const { ws, api } = action;
+      const { api, ws } = action;
       newState.ws = ws;
-      api.newState(newState);
-      api.bindWsEvents(ws);
+      api.state = newState;
       return newState;
     }
     case 'srv.userList': {
@@ -52,32 +58,43 @@ const createReducer = () => {
       newState.clientList = action.data;
       return newState;
     }
-    case 'srv.userConnected': {
+    case 'srv.clientOnline': {
       const newState = { ...state };
-      const { jid, caps } = action.data;
-      newState.clientList[jid] = caps;
+      const { capabilities } = action.data.message.clientonline;
+      newState.clientList[action.data.from_jid] = capabilities;
       return newState;
     }
-    case 'srv.userDisconnected': {
+    case 'srv.clientOffline': {
       const newState = { ...state };
-      delete newState.clientList[action.data.jid];
+      delete newState.clientList[action.data.from_jid];
       return newState;
-    }
-
-    case 'srv.relay': {
     }
 
     // ---- Calls ----
 
     case 'm.connect': {
       const newState = { ...state };
-      newState.connectedTo.push(action.data);
+      newState.connectedTo[action.data] = 'connecting';
       return newState;
     }
 
     case 'm.disconnect': {
       const newState = { ...state };
-      newState.connectedTo = newState.connectedTo.filter(c => c !== action.data);
+      delete newState.connectedTo[action.data];
+      return newState;
+    }
+
+    case 'm.peerConn': {
+      const newState = { ...state };
+      newState.peerConnections[action.jid] = action.peerConn;
+      return newState;
+    }
+
+    // ---- UI state updates ----
+
+    case 'ui.enableAudioRecording': {
+      const newState = { ...state };
+      newState.ui.recordAudio = false;
       return newState;
     }
 
@@ -92,6 +109,8 @@ const createReducer = () => {
 const rnd = new Uint32Array(1); window.crypto.getRandomValues(rnd);
 const resource = rnd.join('');
 
+
+
 /** The public API for this storage layer */
 class API {
   constructor (state, dispatch) {
@@ -104,9 +123,15 @@ class API {
     return this.state.auth.state;
   };
 
+  /** Return the the user's JID */
+  getJID() {
+    const { user } = this.state.auth;
+    return user;
+  }
+
   /** Return the bare piece of the user's JID */
   getBareJID() {
-    const { user } = this.state.auth;
+    const user = this.getJID();
     if (user) {
       const [bareJid, ] = user.split('/');
       return bareJid;
@@ -144,6 +169,103 @@ class API {
     return authState;
   }
 
+  connectionSettings() {
+    return {
+      iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+    };
+  }
+
+  call(jid, peerConn) {
+    console.log(`CALL TRIGGERED TO ${jid}`);
+
+    // peerConn.ontrack = handleTrackEvent;
+    // peerConn.oniceconnectionstatechange = handleICEConnectionStateChangeEvent;
+    // peerConn.onicegatheringstatechange = handleICEGatheringStateChangeEvent;
+    // peerConn.onsignalingstatechange = handleSignalingStateChangeEvent;
+
+    const createSDP = () => {
+      console.log("WebRTC: Creating SDP offer");
+      peerConn
+        .createOffer()
+        .then(offer => {
+          console.log(`offer created: ${offer}`);
+          return peerConn.setLocalDescription(offer);
+        })
+        .then(() => {
+          console.log(`offer sent to: ${jid}: ${peerConn.localDescription}`);
+          return this.wsSend({ calloffer: { sdp: peerConn.localDescription } }, jid);
+        })
+        .catch(error => {
+          console.error(error);
+        });
+    };
+
+    peerConn.onnegotiationneeded = () => {
+      createSDP();
+    };
+
+    peerConn.onicecandidate = ({ candidate }) => {
+      if (!candidate) return;
+      this.wsSend({ "newicecandidate": candidate }, jid);
+    };
+
+    createSDP();
+
+    // Update the state to associate a peer connection to a JID so we
+    // can retrieve this same peer connection instance when messages
+    // arrive on the websocket wire.
+    this.dispatch({ type: 'm.peerConn', jid, peerConn });
+  }
+
+  handleConnectionMessage({ from_jid, message }) {
+    const peerConn = this.state.peerConnections[from_jid];
+    console.log("DEBUG: MSG:", from_jid, message);
+    if (message.callanswer) {
+      console.log("WEBRTC: Receive SDP answer", from_jid, message);
+
+      const desc = new RTCSessionDescription(message.callanswer.sdp);
+
+      (() => {
+        if (peerConn.signalingState !== "stable") {
+          console.log("  - But the signaling state isn't stable, so triggering rollback");
+          return Promise.all([
+            peerConn.setLocalDescription({ type: "rollback" }),
+            peerConn.setRemoteDescription(desc)
+          ]);
+        } else {
+          console.log ("  - Setting remote description");
+          return myPeerConnection.setRemoteDescription(desc);
+        }
+      })()
+        .then(() => peerConn.createAnswer())
+        .then(answer => peerConn.setLocalDescription(answer))
+        .catch(e => {
+          console.error("Cannot set Remote Description", e);
+        });
+      
+
+
+      // peerConn
+      //   .setRemoteDescription(message.callanswer.sdp)
+      //   .then(() => peerConn.createAnswer())
+      //   .then(answer => peerConn.setLocalDescription(answer))
+      //   .then()
+      //   .catch(e => {
+      //     console.error("Cannot set Remote Description", e);
+      //   });
+    }
+
+    if (message.newicecandidate) {
+      const candidate = new RTCIceCandidate(message.newicecandidate.ice);
+      console.log("WEBRTC: Receive ICE candidate", from_jid, message);
+      peerConn
+        .addIceCandidate(candidate)
+        .catch(e => {
+          console.error("Cannot add ICE candidate", e);
+        });
+    }
+  }
+
   /** Retrieve the list of currently connected clients & updates the internal state */
   async listClients() {
     const response = await window.fetch('/api/clients');
@@ -155,14 +277,15 @@ class API {
 
   /** Returns true if we're currently connected to client wih JID */
   isConnectedTo(jid) {
-    return this.state.connectedTo.includes(jid);
+    console.log(`check if ${jid} is connected: ${this.state.connectedTo[jid]}`);
+    return this.state.connectedTo[jid] !== undefined;
   }
 
   /** Return a list of all connected clients.
    *
    * This list includes clients that are still connectING. */
   connectedClients() {
-    return this.state.connectedTo;
+    return Object.keys(this.state.connectedTo);
   }
 
   /** Dispatch message to connect to a given client */
@@ -177,17 +300,21 @@ class API {
 
   /** Return the URL to connect to the WebSocket */
   webSocketUrl() {
-    return 'ws://localhost:8080/ws?token=admin@domain.tld';
+    return 'wss://guinho.home:7070/ws?token=admin@domain.tld';
   }
 
   /** Sends a messave to the websocket server */
-  wsSend(message) {
-    this.state.ws.send(JSON.stringify(message));
+  wsSend(message, toJID="") {
+    this.state.ws.send(JSON.stringify({
+      from_jid: this.getBareJID(),
+      to_jid: toJID,
+      message,
+    }));
   }
 
   /** Sends this client's capabilities upon successful connection */
   wsOpen(event) {
-    this.wsSend({ caps: ['r:audio', 'r:video', 's:audio'] });
+    this.wsSend({ capabilities: ['consume:audio', 'consume:video', 'produce:audio'] });
   }
 
   /** Triggered when the server closes the connection */
@@ -196,43 +323,40 @@ class API {
 
   /** Triggered upon error on the connection */
   wsError(event) {
+    console.dir(event);
   }
 
   /** Event triggered when the server sends this client a message */
   wsMessage(e) {
+    // console.log(`MESSAGE: ${JSON.stringify(e)}`);
+    // console.dir(e);
+    // return;
+
     if (e.type === "message") {
-      const event = JSON.parse(e.data);
-      // Server notifying this client about a new client connection
-      if (event.clientconnected)
-        this.dispatch({
-          type: 'srv.userConnected',
-          data: event.clientconnected,
-        });
-      // Server notifying this client about a client disconnection
-      else if (event.clientdisconnected)
-        this.dispatch({
-          type: 'srv.userDisconnected',
-          data: event.clientdisconnected,
-        });
+      const data = JSON.parse(e.data);
+
+      if (data.message.clientonline !== undefined) {
+        this.dispatch({ type: 'srv.clientOnline', data });
+        return;
+      }
+
+      if (data.message === 'clientoffline') {
+        this.dispatch({ type: 'srv.clientOffline', data });
+        return;
+      }
+
       // Server relaying a message from another client
-      else if (event.from_jid)
-        this.dispatch({
-          type: 'srv.relay',
-          data: event.message,
-        });
-      // Don't know what to do with this
-      else
-        console.error("Unknown message", event);
+      this.handleConnectionMessage(data)
     }
   }
 
-  /** Connect to the WebSocket server & bind event callbacks */
   connect() {
-    this.state.ws = new window.WebSocket(this.webSocketUrl());
-    this.state.ws.addEventListener('open', this.wsOpen.bind(this));
-    this.state.ws.addEventListener('error', this.wsError.bind(this));
-    this.state.ws.addEventListener('message', this.wsMessage.bind(this));
-    this.state.ws.addEventListener('close', this.wsClose.bind(this));
+    const ws = new window.WebSocket(this.webSocketUrl());
+    ws.addEventListener('open', this.wsOpen.bind(this));
+    ws.addEventListener('close', this.wsClose.bind(this));
+    ws.addEventListener('error', this.wsError.bind(this));
+    ws.addEventListener('message', this.wsMessage.bind(this));
+    this.dispatch({ type: 'srv.connect', api: this, ws });
   }
 
   /** Entry point for this client's session */
@@ -241,7 +365,7 @@ class API {
     await this.auth(data);
     // If we're good, proceed to connecting to the chat server
     if (this.authState() === AuthState.Authenticated)
-      await this.connect();
+      this.connect();
   }
 }
 

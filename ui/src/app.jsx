@@ -83,11 +83,11 @@ function ClientItem({ primary, caps }) {
          </IconShell>}
 
         {!isConnectedTo && caps.map(c =>
-          ['s:audio', 's:video'].includes(c) &&
+          ['produce:audio', 'produce:video'].includes(c) &&
             <IconShell key={`key-cap-${primary}-${c}`}>
               <Avatar>
-                {c === 's:video' && <VideocamIcon style={iconStyle} />}
-                {c === 's:audio' && <MicIcon style={iconStyle} />}
+                {c === 'produce:video' && <VideocamIcon style={iconStyle} />}
+                {c === 'produce:audio' && <MicIcon style={iconStyle} />}
               </Avatar>
             </IconShell>
         )}
@@ -97,7 +97,10 @@ function ClientItem({ primary, caps }) {
 }
 
 const ClientCardShell = styled.div`
+  display: grid;
+  margin: 0;
   padding: 0px 10px 10px 10px;
+  place-items: center center;
 
   & .canvasEl {
     background-color: #aaa;
@@ -105,13 +108,51 @@ const ClientCardShell = styled.div`
   }
 `;
 
+
 function ClientCard({ client }) {
-  const canvasRef = React.useRef();
+  const { api } = React.useContext(store);
+  const [loading, setLoading] = React.useState(true);
+  const [videoEl, setVideoEl] = React.useState(null);
+
+  // The render method won't show the video tag unless loading is
+  // false. With that, this method ends up also depending on the loading
+  // flag to be false as well.
+  const canvasRefCallback = React.useCallback(node => {
+    if (node !== null) {
+      setVideoEl(node);
+    }
+  }, []);
+
+  // Entry point of the WebRTC conversation. We create a peer connection
+  // for intermediating the conversation with the peer identified by the
+  // `client' parameter received above.
+  React.useEffect(() => {
+    const peerConn = new RTCPeerConnection(api.connectionSettings());
+
+    peerConn.ontrack = ({ streams }) => {
+      console.log("Client", client, "got a new stream");
+      videoEl.srcObject = streams[0];
+    };
+
+    // Dial up to reach out to the client and use the recently created
+    // object peerConn to store the state of the conversation.
+    api.call(client, peerConn);
+  }, []);
+
   return (
     <Paper>
       <ClientCardShell>
         <h2>{client}</h2>
-        <video className="canvasEl" ref={canvasRef} autoPlay={true} playsInline={true}></video>
+
+        {loading && <SpinnerIcon />}
+
+        {!loading &&
+         <video
+           autoPlay
+           playsInline
+           className="canvasEl"
+           ref={canvasRefCallback}>
+         </video>}
       </ClientCardShell>
     </Paper>
   );
@@ -120,7 +161,7 @@ function ClientCard({ client }) {
 function ConnectedClients({ list }) {
   return (
     <Grid container justify="center" spacing={2}>
-      {list.map((c) =>
+      {Object.keys(list).map((c) =>
         <Grid item key={`connected-client-${c}`}>
           <ClientCard client={c} />
         </Grid>)}
@@ -160,7 +201,6 @@ function ListClientsScreen() {
   const { api } = React.useContext(store);
   const [loading, setLoading] = React.useState(true);
   const [clientList, setClientList] = React.useState({});
-  const [connectedClients, setConnectedClients] = React.useState([]);
   // Feed the initial list of available clients
   React.useEffect(() => {
     api.listClients().then(clients => {
@@ -173,11 +213,6 @@ function ListClientsScreen() {
   React.useEffect(() => {
     setClientList(api.state.clientList);
   }, [api.state.clientList]);
-
-  // Feed the list of already connected (or connecting) clients
-  React.useEffect(() => {
-    setConnectedClients(api.connectedClients());
-  }, [api.state.connectedTo]);
 
   if (loading)
     return <Loading />;
@@ -205,8 +240,8 @@ function ListClientsScreen() {
 
           <Grid item xs={8}>
             <ListClientScreenShell>
-              {connectedClients.length === 0 && <NoClientConnectedMessage />}
-              {connectedClients.length > 0 && <ConnectedClients list={connectedClients} />}
+              {Object.keys(api.state.connectedTo).length === 0 && <NoClientConnectedMessage />}
+              {Object.keys(api.state.connectedTo).length > 0 && <ConnectedClients list={api.state.connectedTo} />}
             </ListClientScreenShell>
           </Grid>
         </Grid>
