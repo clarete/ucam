@@ -47,13 +47,16 @@ module.exports = {
   },
   devServer: {
     proxy: {
-      '/ws': {
-        target: 'http://localhost:7070',
+      '/wss': {
+        target: 'http://guinho.home:7070',
+        secure: true,
         ws: true
       },
 
       '/api': {
-        target: 'http://localhost:7070',
+        target: 'https://guinho.home:7070',
+        secure: false,
+        changeOrigin: true,
         pathRewrite: {'^/api' : ''}
       }
     }
