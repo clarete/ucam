@@ -5,6 +5,7 @@ authors = ["Lincoln de Sousa <lincoln@clarete.li>"]
 edition = "2018"
 
 [dependencies]
+protocol = { path = "../protocol" }
 env_logger = "*"
 log = "*"
 actix = "0.9"

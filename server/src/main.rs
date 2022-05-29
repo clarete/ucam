@@ -14,6 +14,8 @@ use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 use serde_derive::{Deserialize, Serialize};
 
+use protocol;
+
 // ---- Constants ----
 
 /// How often heartbeat pings are sent
@@ -81,6 +83,14 @@ struct Connect {
     addr: Recipient<ProtoMessage>,
 }
 
+/// Client that recently connected sends its capabilities
+#[derive(Message)]
+#[rtype(result = "()")]
+struct Capabilities {
+    jid: String,
+    capabilities: HashSet<String>,
+}
+
 /// Client disconnected
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -95,14 +105,6 @@ impl Message for ListClients {
     type Result = HashMap<String, HashSet<String>>;
 }
 
-/// Configure a specific client
-#[derive(Message, Debug)]
-#[rtype(result = "()")]
-struct ConfigClient {
-    jid: String,
-    caps: HashSet<String>,
-}
-
 /// Relay message to another user
 #[derive(Debug, Message, Serialize)]
 #[rtype(result = "()")]
@@ -113,35 +115,7 @@ struct RelayMessage {
     to_jid: String,
     /// The message to be sent. It's a JSON message but the client
     /// receiving it should decode it, not the protocol server.
-    message: ProtocolMessage,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum ProtocolMessage {
-    ClientConnected {
-        jid: String,
-        caps: HashSet<String>,
-    },
-    ClientDisconnected {
-        jid: String,
-    },
-}
-
-/// Relay message format
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-struct RelayMsg {
-    to_jid: String,
-    message: String,
-}
-
-/// All the message types a ChatConnection can receive
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
-enum ClientMessages {
-    Caps(HashSet<String>),
-    Relay(RelayMsg),
+    message: protocol::Message,
 }
 
 // ----- Server Implementation ----
@@ -150,7 +124,7 @@ enum ClientMessages {
 #[derive(Clone)]
 struct ClientInfo {
     addr: Recipient<ProtoMessage>,
-    caps: HashSet<String>,
+    capabilities: HashSet<String>,
 }
 
 impl ClientInfo {
@@ -159,7 +133,7 @@ impl ClientInfo {
     fn new(addr: Recipient<ProtoMessage>) -> Self {
         ClientInfo {
             addr: addr,
-            caps: HashSet::<String>::new(),
+            capabilities: HashSet::<String>::new(),
         }
     }
 }
@@ -202,8 +176,7 @@ impl Actor for ChatServer {
     type Context = Context<Self>;
 }
 
-/// Define the handler for Connect messages from ChatConnection
-/// actors.
+/// Handler for Connect messages from ChatConnection actors.
 impl Handler<Connect> for ChatServer {
     type Result = ();
 
@@ -222,11 +195,35 @@ impl Handler<Disconnect> for ChatServer {
         self.clients.remove(&msg.jid);
         // Then finally inform the currently connected clients about
         // the event
-        let user_msg = ProtocolMessage::ClientDisconnected {
-            jid: msg.jid.clone(),
+        let forward = protocol::Envelope {
+            from_jid: msg.jid.clone(),
+            to_jid: "".to_string(),
+            message: protocol::Message::ClientOffline,
         };
-        let user_msg_str = serde_json::to_string(&user_msg).unwrap();
-        self.broadcast(ProtoMessage(user_msg_str), None);
+        let forward_str = serde_json::to_string(&forward).unwrap();
+        self.broadcast(ProtoMessage(forward_str), Some(&msg.jid));
+    }
+}
+
+/// Handler for Connect messages from ChatConnection actors.
+impl Handler<Capabilities> for ChatServer {
+    type Result = ();
+
+    /// Insert the newly connected client into the clients hash table.
+    fn handle(&mut self, msg: Capabilities, _ctx: &mut Self::Context) {
+        match self.clients.get_mut(&msg.jid) {
+            None => error!("Can't set capabilities, client `{}' not connected", msg.jid),
+            Some(client) => {
+                client.capabilities = msg.capabilities.clone();
+                let forward = protocol::Envelope {
+                    from_jid: msg.jid.clone(),
+                    to_jid: "".to_string(),
+                    message: protocol::Message::ClientOnline { capabilities: msg.capabilities },
+                };
+                let forward_str = serde_json::to_string(&forward).unwrap();
+                self.broadcast(ProtoMessage(forward_str), Some(&msg.jid));
+            },
+        }
     }
 }
 
@@ -237,32 +234,9 @@ impl Handler<ListClients> for ChatServer {
     fn handle(&mut self, _: ListClients, _ctx: &mut Self::Context) -> Self::Result {
         let mut output: HashMap<String, HashSet<String>> = HashMap::new();
         for (key, client_info) in &self.clients {
-            output.insert(key.clone(), client_info.caps.clone());
+            output.insert(key.clone(), client_info.capabilities.clone());
         }
         MessageResult(output)
-    }
-}
-
-impl Handler<ConfigClient> for ChatServer {
-    type Result = ();
-
-    /// Save the capabilities received via ChatConnection
-    fn handle(&mut self, msg: ConfigClient, _ctx: &mut Self::Context) {
-        // Finally update the clients list
-        let user_msg = ProtocolMessage::ClientConnected {
-            jid: msg.jid.clone(),
-            caps: msg.caps.clone(),
-        };
-        let user_msg_str = serde_json::to_string(&user_msg).unwrap();
-        self.broadcast(ProtoMessage(user_msg_str), Some(&msg.jid));
-
-        for cap in msg.caps {
-            self.clients
-                .get_mut(&msg.jid)
-                .unwrap()
-                .caps
-                .insert(cap.clone());
-        }
     }
 }
 
@@ -273,7 +247,7 @@ impl Handler<RelayMessage> for ChatServer {
     fn handle(&mut self, msg: RelayMessage, _ctx: &mut Self::Context) {
         let message = serde_json::to_string(&msg).unwrap();
         match self.clients.get(&msg.to_jid) {
-            None => error!("Client {} not connected", msg.to_jid),
+            None => error!("Client `{}' not connected", msg.to_jid),
             Some(client) => client.addr.do_send(ProtoMessage(message)).unwrap(),
         }
     }
@@ -336,22 +310,24 @@ impl ChatConnection {
     }
 
     fn _handle_message(&self, msg: &String) -> Result<(), serde_json::Error> {
-        let deserialize: ClientMessages = serde_json::from_str(msg.as_str())?;
-        match deserialize {
-            ClientMessages::Caps(caps) => self.server.do_send(ConfigClient {
-                jid: self.jid.clone(),
-                caps: caps,
-            }),
-            ClientMessages::Relay(relay) => {
-                let message_str = relay.message.as_str();
-                let message: ProtocolMessage = serde_json::from_str(message_str)?;
+        let deserialized: protocol::Envelope = serde_json::from_str(msg.as_str())?;
+
+        match deserialized.message {
+            protocol::Message::Capabilities(capabilities) => {
+                self.server.do_send(Capabilities {
+                    jid: deserialized.from_jid,
+                    capabilities,
+                });
+            },
+            relay @ _ => {
                 self.server.do_send(RelayMessage {
-                    from_jid: self.jid.clone(),
-                    to_jid: relay.to_jid,
-                    message: message,
-                })
+                    from_jid: deserialized.from_jid,
+                    to_jid: deserialized.to_jid,
+                    message: relay,
+                });
             }
         }
+
         Ok(())
     }
 
@@ -410,8 +386,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
             Ok(ws::Message::Text(text)) => {
                 self.handle_message(text);
             }
-            _ => {
-                error!("Something unexpected came along");
+            Ok(ws::Message::Close(_)) => {
+                // close connection as the client has already disconnected
+                ctx.stop();
+            }
+            xxx @ _ => {
+                error!("Something unexpected came along: {:?}", xxx);
                 ctx.stop();
             }
         }
@@ -424,7 +404,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
 async fn http_api_clients(
     server: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let clients = server.send(ListClients {}).await.unwrap();
+    let clients = server.send(ListClients {}).await?;
     Ok(HttpResponse::Ok().json(clients))
 }
 
