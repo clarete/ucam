@@ -2,13 +2,13 @@ import * as React from "react";
 import * as ReactDOM from "react-dom";
 import CssBaseline from '@material-ui/core/CssBaseline';
 
-import { Provider } from './store';
 import App from './app';
+import { ContextProvider } from './context';
 
 ReactDOM.render(
-  <Provider>
+  <ContextProvider>
     <CssBaseline />
     <App />
-  </Provider>,
+  </ContextProvider>,
   document.getElementById("mounting-point")
 );

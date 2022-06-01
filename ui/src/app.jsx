@@ -26,6 +26,8 @@ import { useForm } from 'react-hook-form';
 import { store, AuthState } from './store';
 import SpinnerIcon from './spinner';
 
+import { useAuthState } from './hooks/useAuthState';
+
 const CenterCenterShell = styled.div`
   display: grid;
   height: 100vh;
@@ -108,11 +110,11 @@ const ClientCardShell = styled.div`
   }
 `;
 
-
-function ClientCard({ client }) {
+function ClientCard({ jid }) {
   const { api } = React.useContext(store);
-  const [loading, setLoading] = React.useState(true);
+  const [loading, setLoading] = React.useState(false);
   const [videoEl, setVideoEl] = React.useState(null);
+  // const callStatus = api.useCallStatus(videoEl, setLoading);
 
   // The render method won't show the video tag unless loading is
   // false. With that, this method ends up also depending on the loading
@@ -120,29 +122,31 @@ function ClientCard({ client }) {
   const canvasRefCallback = React.useCallback(node => {
     if (node !== null) {
       setVideoEl(node);
+      setLoading(false);
+      // api.saveVideoElementForJID(jid, node);
+      // api.createPeerConnection(jid);
+      // api.sendOffer(jid);
     }
   }, []);
 
   // Entry point of the WebRTC conversation. We create a peer connection
   // for intermediating the conversation with the peer identified by the
   // `client' parameter received above.
-  React.useEffect(() => {
-    const peerConn = new RTCPeerConnection(api.connectionSettings());
-
-    peerConn.ontrack = ({ streams }) => {
-      console.log("Client", client, "got a new stream");
-      videoEl.srcObject = streams[0];
-    };
-
-    // Dial up to reach out to the client and use the recently created
-    // object peerConn to store the state of the conversation.
-    api.call(client, peerConn);
-  }, []);
+  // React.useEffect(() => {
+  //   // api.(event) => {
+  //   //   console.log('Add stream');
+  //   //   videoEl.autoplay = true;
+  //   //   videoEl.srcObject = event.stream;
+  //   // }
+  //   // api.createPeerConnection(jid);
+  //   // api.sendOffer(jid);
+  //   // api.addPendingCandidates(jid);
+  // }, []);
 
   return (
     <Paper>
       <ClientCardShell>
-        <h2>{client}</h2>
+        <h2>{jid}</h2>
 
         {loading && <SpinnerIcon />}
 
@@ -158,12 +162,12 @@ function ClientCard({ client }) {
   );
 }
 
-function ConnectedClients({ list }) {
+function ConnectedClients({ connectedTo }) {
   return (
     <Grid container justify="center" spacing={2}>
-      {Object.keys(list).map((c) =>
-        <Grid item key={`connected-client-${c}`}>
-          <ClientCard client={c} />
+      {Object.keys(connectedTo).map((jid) =>
+        <Grid item key={`connected-client-${jid}`}>
+          <ClientCard jid={jid} />
         </Grid>)}
     </Grid>
   );
@@ -201,18 +205,19 @@ function ListClientsScreen() {
   const { api } = React.useContext(store);
   const [loading, setLoading] = React.useState(true);
   const [clientList, setClientList] = React.useState({});
-  // Feed the initial list of available clients
-  React.useEffect(() => {
-    api.listClients().then(clients => {
-      setClientList(clients);
-      setLoading(false);
-    });
-  }, []);
 
-  // Update the list of available clients upon websocket event
-  React.useEffect(() => {
-    setClientList(api.state.clientList);
-  }, [api.state.clientList]);
+  // // Feed the initial list of available clients
+  // React.useEffect(() => {
+  //   api.listClients().then(clients => {
+  //     setClientList(clients);
+  //     setLoading(false);
+  //   });
+  // }, []);
+
+  // // Update the list of available clients upon websocket event
+  // React.useEffect(() => {
+  //   setClientList(api.state.clientList);
+  // }, [api.state.clientList]);
 
   if (loading)
     return <Loading />;
@@ -241,7 +246,7 @@ function ListClientsScreen() {
           <Grid item xs={8}>
             <ListClientScreenShell>
               {Object.keys(api.state.connectedTo).length === 0 && <NoClientConnectedMessage />}
-              {Object.keys(api.state.connectedTo).length > 0 && <ConnectedClients list={api.state.connectedTo} />}
+              {Object.keys(api.state.connectedTo).length > 0 && <ConnectedClients connectedTo={api.state.connectedTo} />}
             </ListClientScreenShell>
           </Grid>
         </Grid>
@@ -251,9 +256,9 @@ function ListClientsScreen() {
 }
 
 function AuthForm() {
-  const { api } = React.useContext(store);
+  const { authState, auth } = useAuthState();
   const { register, handleSubmit, errors } = useForm();
-  const onSubmit = async data => api.startSession(data);
+  const onSubmit = async formData => auth(formData);
 
   return (
     <CenterCenterShell>
@@ -272,21 +277,21 @@ function AuthForm() {
             margin="normal"
             required
             fullWidth
-            id="email"
-            label="Email Address"
-            name="email"
-            autoComplete="email"
+            id="jid"
+            label="User ID"
+            name="jid"
+            autoComplete="jid"
             autoFocus
             inputRef={register({ required: true })}
           />
-          {errors.email &&
+          {errors.jid &&
            <Error>
-             Email is required.
+             This field is required.
            </Error>}
 
-          {api.authState() === AuthState.Unauthorized &&
+          {authState === AuthState.Unauthorized &&
            <Error>
-             Email unauthorized.
+             Unauthorized.
            </Error>}
 
           <Button
@@ -312,8 +317,8 @@ function Loading() {
 }
 
 export default function App() {
-  const { api } = React.useContext(store);
-  switch (api.authState()) {
+  const { authState } = useAuthState();
+  switch (authState) {
   case AuthState.Loading:
     return <Loading />;
   case AuthState.Authenticated:
