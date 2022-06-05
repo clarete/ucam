@@ -1404,6 +1404,7 @@ dependencies = [
  "actix-rt",
  "actix-web",
  "actix-web-actors",
+ "base64",
  "env_logger",
  "log",
  "openssl",

@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 protocol = { path = "../protocol" }
+base64 = "*"
 env_logger = "*"
 log = "*"
 actix = "0.9"

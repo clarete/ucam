@@ -10,6 +10,8 @@ use actix_rt;
 use actix_web;
 use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
+
+use base64;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 use serde_derive::{Deserialize, Serialize};
@@ -98,8 +100,10 @@ struct Disconnect {
     jid: String,
 }
 
-/// List connections
-struct ListClients;
+/// List clients connected to the server excluding sender's own JID
+struct ListClients {
+    jid: String,
+}
 
 impl Message for ListClients {
     type Result = HashMap<String, HashSet<String>>;
@@ -231,9 +235,13 @@ impl Handler<ListClients> for ChatServer {
     type Result = MessageResult<ListClients>;
 
     /// Return a list with the JIDs of all currently connected clients
-    fn handle(&mut self, _: ListClients, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: ListClients, _ctx: &mut Self::Context) -> Self::Result {
         let mut output: HashMap<String, HashSet<String>> = HashMap::new();
         for (key, client_info) in &self.clients {
+            // we don't report the JID of whoever asked for this list
+            if *key == msg.jid {
+                continue;
+            }
             output.insert(key.clone(), client_info.capabilities.clone());
         }
         MessageResult(output)
@@ -402,13 +410,47 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
 
 /// List currently connected clients
 async fn http_api_clients(
+    req: HttpRequest,
     server: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let clients = server.send(ListClients {}).await?;
-    Ok(HttpResponse::Ok().json(clients))
+    match read_jid_from_request(&req) {
+        None => Ok(HttpResponse::Unauthorized().finish()),
+        Some(Err(_e)) => Ok(HttpResponse::BadRequest().finish()),
+        Some(Ok(jid)) => {
+            let clients = server.send(ListClients { jid }).await?;
+            Ok(HttpResponse::Ok().json(clients))
+        }
+    }
 }
 
 // ---- HTTP Server Handling ----
+
+#[derive(Debug)]
+struct Error {}
+
+impl Error {
+    fn new() -> Self {
+        Self {}
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Error")
+    }
+}
+
+impl From<base64::DecodeError> for Error {
+    fn from(_err: base64::DecodeError) -> Self {
+        Error::new()
+    }
+}
+
+impl From<std::str::Utf8Error> for Error {
+    fn from(_err: std::str::Utf8Error) -> Self {
+        Error::new()
+    }
+}
 
 /// Represents the data that arrives from the authentication form.
 #[derive(Debug, Deserialize)]
@@ -454,11 +496,13 @@ async fn ws(
     stream: web::Payload,
     server: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    if let Some(jid) = read_jid_from_request(&req) {
-        let client = ChatConnection::new(jid, server.get_ref().clone());
-        ws::start(client, &req, stream)
-    } else {
-        Ok(HttpResponse::Unauthorized().finish())
+    match read_jid_from_request(&req) {
+        None => Ok(HttpResponse::Unauthorized().finish()),
+        Some(Err(_e)) => Ok(HttpResponse::BadRequest().finish()),
+        Some(Ok(jid)) => {
+            let client = ChatConnection::new(jid, server.get_ref().clone());
+            ws::start(client, &req, stream)
+        },
     }
 }
 
@@ -483,17 +527,20 @@ fn get_auth_header<'a>(req: &'a HttpRequest) -> Option<&'a str> {
 /// TODO: Right now, this function returns a string with the JID
 /// itself instead returning the struct with the claims and stuff.
 /// Mostly because we actually don't have tokens yet.
-fn decode_token_from_header(authorization: &str) -> String {
-    (&authorization[7..]).to_string()
+fn decode_token_from_header(authorization: &str) -> Result<String, Error> {
+    let decoded = base64::decode(&authorization[6..])?;
+    Ok(std::str::from_utf8(&decoded)?.to_string())
 }
 
 /// Decode & Check JWT token from HTTP header or QueryString
-fn read_jid_from_request(req: &HttpRequest) -> Option<String> {
-    let token = match get_auth_token(req) {
-        Ok(token) => token,
-        _ => decode_token_from_header(get_auth_header(req)?),
-    };
-    Some(token)
+fn read_jid_from_request(req: &HttpRequest) -> Option<Result<String, Error>> {
+    if let Ok(token) = get_auth_token(req) {
+        Some(Ok(token))
+    } else if let Some(header) = get_auth_header(req) {
+        Some(decode_token_from_header(header))
+    } else {
+        None
+    }
 }
 
 /// Applicatio error types.
@@ -566,7 +613,7 @@ async fn main() -> Result<(), io::Error> {
             .data(server_actor.clone())
             .route("/ws", web::get().to(ws))
             .route("/auth", web::post().to(auth))
-            .route("/clients", web::get().to(http_api_clients))
+            .route("/roster", web::get().to(http_api_clients))
     };
     HttpServer::new(app)
         .bind_openssl(bind_addr, builder)?
