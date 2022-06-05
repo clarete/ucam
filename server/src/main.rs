@@ -528,7 +528,7 @@ fn get_auth_header<'a>(req: &'a HttpRequest) -> Option<&'a str> {
 /// itself instead returning the struct with the claims and stuff.
 /// Mostly because we actually don't have tokens yet.
 fn decode_token_from_header(authorization: &str) -> Result<String, Error> {
-    let decoded = base64::decode(&authorization[6..])?;
+    let decoded = base64::decode(&authorization[7..])?;
     Ok(std::str::from_utf8(&decoded)?.to_string())
 }
 
