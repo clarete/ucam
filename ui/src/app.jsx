@@ -256,7 +256,7 @@ function ListClientsScreen() {
 }
 
 function AuthForm() {
-  const { authState, auth } = useAuthState();
+  const { authState, authError, auth } = useAuthState();
   const { register, handleSubmit, errors } = useForm();
   const onSubmit = async formData => auth(formData);
 
@@ -284,14 +284,15 @@ function AuthForm() {
             autoFocus
             inputRef={register({ required: true })}
           />
+
           {errors.jid &&
            <Error>
              This field is required.
            </Error>}
 
-          {authState === AuthState.Unauthorized &&
+          {authState === AuthState.Failed &&
            <Error>
-             Unauthorized.
+             {authError.httpString}.
            </Error>}
 
           <Button

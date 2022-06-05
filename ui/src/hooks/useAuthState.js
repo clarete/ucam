@@ -4,16 +4,20 @@ import { AuthState, login } from '../services/auth';
 
 /// Expose authState and the authentication API to components.
 export function useAuthState() {
-  const { state: { authState }, dispatch } = useAppContext();
+  const { state: { authState, authError }, dispatch } = useAppContext();
 
   const auth = async (authFormData) => {
     dispatch({ type: actions.AUTH_LOADING });
-    if (await login(authFormData) == AuthState.Authenticated) {
-      dispatch({ type: actions.AUTH_SUCCESS });
+    const { authState, authError } = await login(authFormData);
+
+    if (authState == AuthState.Authenticated) {
+      const { jid } = authFormData;
+      dispatch({ type: actions.AUTH_SUCCESS, jid });
       return;
     }
-    dispatch({ type: actions.AUTH_FAILURE });
+
+    dispatch({ type: actions.AUTH_FAILURE, authState, authError });
   }
 
-  return { authState, auth };
+  return { authState, authError, auth };
 }
