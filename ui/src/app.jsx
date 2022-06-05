@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 
 import Avatar from '@material-ui/core/Avatar';
@@ -23,10 +24,16 @@ import MicIcon from '@material-ui/icons/Mic';
 import StopIcon from '@material-ui/icons/Stop';
 
 import { useForm } from 'react-hook-form';
-import { store, AuthState } from './store';
+import { store } from './store';
 import SpinnerIcon from './spinner';
 
+import { useAppContext } from './hooks/useAppContext';
 import { useAuthState } from './hooks/useAuthState';
+import { useWebSocket } from './hooks/useWebSocket';
+
+import { actions } from './context/reducers';
+import { AuthState } from './services/auth';
+import * as serverAPI from './services/api';
 
 const CenterCenterShell = styled.div`
   display: grid;
@@ -66,7 +73,7 @@ const iconStyle = { width: 16, height: 16 };
 
 function ClientItem({ primary, caps }) {
   const { api } = React.useContext(store);
-  const isConnectedTo = api.isConnectedTo(primary);
+  const isConnectedTo = false;//api.isConnectedTo(primary);
   const handleItemClick = () => isConnectedTo
     ? api.disconnectFrom(primary)
     : api.connectTo(primary);
@@ -111,10 +118,8 @@ const ClientCardShell = styled.div`
 `;
 
 function ClientCard({ jid }) {
-  const { api } = React.useContext(store);
-  const [loading, setLoading] = React.useState(false);
-  const [videoEl, setVideoEl] = React.useState(null);
-  // const callStatus = api.useCallStatus(videoEl, setLoading);
+  const [loading, setLoading] = useState(false);
+  const [videoEl, setVideoEl] = useState(null);
 
   // The render method won't show the video tag unless loading is
   // false. With that, this method ends up also depending on the loading
@@ -123,9 +128,6 @@ function ClientCard({ jid }) {
     if (node !== null) {
       setVideoEl(node);
       setLoading(false);
-      // api.saveVideoElementForJID(jid, node);
-      // api.createPeerConnection(jid);
-      // api.sendOffer(jid);
     }
   }, []);
 
@@ -202,27 +204,23 @@ const ListClientScreenShell = styled.div`
 `;
 
 function ListClientsScreen() {
-  const { api } = React.useContext(store);
-  const [loading, setLoading] = React.useState(true);
-  const [clientList, setClientList] = React.useState({});
+  const [loading, setLoading] = useState(true);
+  const { state, dispatch } = useAppContext();
+  const { send } = useWebSocket();
 
-  // // Feed the initial list of available clients
-  // React.useEffect(() => {
-  //   api.listClients().then(clients => {
-  //     setClientList(clients);
-  //     setLoading(false);
-  //   });
-  // }, []);
-
-  // // Update the list of available clients upon websocket event
-  // React.useEffect(() => {
-  //   setClientList(api.state.clientList);
-  // }, [api.state.clientList]);
+  useEffect(() => {
+    serverAPI
+      .getRoster(state.authToken)
+      .then(roster => {
+        dispatch({ type: actions.ROSTER_LIST, roster });
+        setLoading(false);
+      });
+  }, []);
 
   if (loading)
     return <Loading />;
 
-  if (Object.entries(clientList).length === 0)
+  if (Object.entries(state.roster).length === 0)
     return <NobodyToTalkMessage />
 
   return (
@@ -235,7 +233,7 @@ function ListClientsScreen() {
 
           <Grid item xs={4}>
             <List>
-              {Object.entries(clientList).map(([jid, caps], i) =>
+              {Object.entries(state.roster).map(([jid, caps], i) =>
                 <div key={`key-client-${jid}`}>
                   <ClientItem primary={jid} caps={caps.sort()} />
                   <Divider component="li" />
@@ -245,8 +243,8 @@ function ListClientsScreen() {
 
           <Grid item xs={8}>
             <ListClientScreenShell>
-              {Object.keys(api.state.connectedTo).length === 0 && <NoClientConnectedMessage />}
-              {Object.keys(api.state.connectedTo).length > 0 && <ConnectedClients connectedTo={api.state.connectedTo} />}
+              {Object.keys(state.peersByID).length === 0 && <NoClientConnectedMessage />}
+              {Object.keys(state.peersByID).length > 0 && <ConnectedClients connectedTo={state.peersByID} />}
             </ListClientScreenShell>
           </Grid>
         </Grid>
