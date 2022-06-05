@@ -11,8 +11,9 @@ export function useAuthState() {
     const { authState, authError } = await login(authFormData);
 
     if (authState == AuthState.Authenticated) {
-      const { jid } = authFormData;
-      dispatch({ type: actions.AUTH_SUCCESS, jid });
+      const { jid: authJID } = authFormData;
+      const authToken = authJID;
+      dispatch({ type: actions.AUTH_SUCCESS, authState, authJID, authToken });
       return;
     }
 

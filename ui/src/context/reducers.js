@@ -17,7 +17,7 @@ export function createReducer() {
     case actions.AUTH_LOADING:
       return { ...state, authState: AuthState.Loading };
     case actions.AUTH_SUCCESS:
-      return { ...state, authJID: data, authState: AuthState.Authenticated };
+      return { ...state, ...data };
     case actions.AUTH_FAILURE:
       return { ...state, ...data  };
     default:
