@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 protocol = { path = "../protocol" }
-
+base64 = "*"
 failure = "0.1.5"
 glib = "0.9"
 gst = { package = "gstreamer", version = "0.15", features = ["v1_14"] }

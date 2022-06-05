@@ -1,3 +1,4 @@
+use base64;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -104,7 +105,7 @@ struct Config {
 async fn get_ws_client(config: &Config) -> Result<Framed<BoxedSocket, Codec>, Error> {
     let mut ssl_builder = SslConnector::builder(SslMethod::tls())?;
     ssl_builder.set_ca_file(&config.http.cacert)?;
-
+    let token = base64::encode(&config.http.jid);
     let connector = Connector::new()
         .timeout(Duration::from_secs(15))
         .ssl(ssl_builder.build())
@@ -113,7 +114,7 @@ async fn get_ws_client(config: &Config) -> Result<Framed<BoxedSocket, Codec>, Er
         .connector(connector)
         .finish()
         .ws(&config.http.server)
-        .bearer_auth(&config.http.jid)
+        .bearer_auth(&token)
         .connect()
         .await;
     match client {

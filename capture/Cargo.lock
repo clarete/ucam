@@ -352,6 +352,7 @@ dependencies = [
  "actix-codec",
  "actix-rt",
  "awc",
+ "base64",
  "bytes",
  "env_logger",
  "failure",
