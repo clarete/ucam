@@ -13,6 +13,7 @@ const initialState = {
   clientList: {},
   connectedTo: {},
   peerConnections: {},
+  videoElements: {},
   auth: {
     state: AuthState.Anonymous,
     user: null,
@@ -72,9 +73,20 @@ const createReducer = () => {
 
     // ---- Calls ----
 
+    case 'm.videoEl': {
+      const newState = { ...state };
+      const { remoteJID, node } = action;
+      newState.videoElements[remoteJID] = node;
+      return newState
+    }
+
     case 'm.connect': {
       const newState = { ...state };
-      newState.connectedTo[action.data] = 'connecting';
+      const { api, remoteJID } = action.data;
+      // newState.peerConnections[remoteJID] = api.createPeerConnection();
+      // api.sendOffer(remoteJID);
+      // api.addPendingCandidates(remoteJID);
+      newState.connectedTo[remoteJID] = 'connecting';
       return newState;
     }
 
@@ -110,7 +122,6 @@ const rnd = new Uint32Array(1); window.crypto.getRandomValues(rnd);
 const resource = rnd.join('');
 
 
-
 /** The public API for this storage layer */
 class API {
   constructor (state, dispatch) {
@@ -121,7 +132,7 @@ class API {
   /** Retrieve user authentication state */
   authState() {
     return this.state.auth.state;
-  };
+  }
 
   /** Return the the user's JID */
   getJID() {
@@ -171,88 +182,76 @@ class API {
 
   connectionSettings() {
     return {
-      iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+      // iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
     };
   }
 
-  call(jid, peerConn) {
-    console.log(`CALL TRIGGERED TO ${jid}`);
-
-    // peerConn.ontrack = handleTrackEvent;
-    // peerConn.oniceconnectionstatechange = handleICEConnectionStateChangeEvent;
-    // peerConn.onicegatheringstatechange = handleICEGatheringStateChangeEvent;
-    // peerConn.onsignalingstatechange = handleSignalingStateChangeEvent;
-
-    const createSDP = () => {
-      console.log("WebRTC: Creating SDP offer");
-      peerConn
-        .createOffer()
-        .then(offer => {
-          console.log(`offer created: ${offer}`);
-          return peerConn.setLocalDescription(offer);
-        })
-        .then(() => {
-          console.log(`offer sent to: ${jid}: ${peerConn.localDescription}`);
-          return this.wsSend({ calloffer: { sdp: peerConn.localDescription } }, jid);
-        })
-        .catch(error => {
-          console.error(error);
-        });
+  createPeerConnection(jid) {
+    const pc = new RTCPeerConnection(this.connectionSettings());
+    pc.onicecandidate = (event) => {
+      console.log(`onicecandidate: '${event}'`);
+      if (!event.candidate) return;
+      this.wsSend({ "newicecandidate": event }, jid);
     };
-
-    peerConn.onnegotiationneeded = () => {
-      createSDP();
+    pc.onaddstream = (event) => {
+      const videoEl = this.state.videoElements[jid];
+      console.log(`onaddstream: ${event} ${videoEl}`);
+      if (videoEl !== undefined) {
+        videoEl.autoplay = true;
+        videoEl.srcObject = event.stream;
+      }
     };
+    console.log(`peer connection created for ${jid}`);
+    this.state.peerConnections[jid] = pc;
+  }
 
-    peerConn.onicecandidate = ({ candidate }) => {
-      if (!candidate) return;
-      this.wsSend({ "newicecandidate": candidate }, jid);
-    };
+  sendOffer(remoteJID) {
+    console.log(`send offer: ${remoteJID}`);
+    this.state.peerConnections[remoteJID]
+      .createOffer()
+      .then(
+        sdp => this.setAndSendLocalDescription(remoteJID, sdp),
+        error => { console.error('Send offer failed: ', error); },
+      );
+  }
 
-    createSDP();
+  sendAnswer(remoteJID) {
+    console.log(`Send answer: ${remoteJID}`);
+    this.state.peerConnections[remoteJID]
+      .createAnswer()
+      .then(
+        sdp => this.setAndSendLocalDescription(remoteJID, sdp),
+        error => { console.error('Send answer failed: ', error); },
+      );
+  }
 
-    // Update the state to associate a peer connection to a JID so we
-    // can retrieve this same peer connection instance when messages
-    // arrive on the websocket wire.
-    this.dispatch({ type: 'm.peerConn', jid, peerConn });
+  setAndSendLocalDescription(remoteJID, sdp) {
+    this.state.peerConnections[remoteJID].setLocalDescription(sdp);
+    console.log(`Local description set for ${remoteJID}`);
+    this.wsSend({ calloffer: { sdp } }, remoteJID);
   }
 
   handleConnectionMessage({ from_jid, message }) {
     const peerConn = this.state.peerConnections[from_jid];
-    console.log("DEBUG: MSG:", from_jid, message);
+
     if (message.callanswer) {
       console.log("WEBRTC: Receive SDP answer", from_jid, message);
-
       const desc = new RTCSessionDescription(message.callanswer.sdp);
-
-      (() => {
-        if (peerConn.signalingState !== "stable") {
-          console.log("  - But the signaling state isn't stable, so triggering rollback");
-          return Promise.all([
-            peerConn.setLocalDescription({ type: "rollback" }),
-            peerConn.setRemoteDescription(desc)
-          ]);
-        } else {
-          console.log ("  - Setting remote description");
-          return myPeerConnection.setRemoteDescription(desc);
-        }
-      })()
-        .then(() => peerConn.createAnswer())
-        .then(answer => peerConn.setLocalDescription(answer))
+      peerConn
+        .setRemoteDescription(desc)
         .catch(e => {
           console.error("Cannot set Remote Description", e);
         });
-      
+      return;
+    }
 
-
-      // peerConn
-      //   .setRemoteDescription(message.callanswer.sdp)
-      //   .then(() => peerConn.createAnswer())
-      //   .then(answer => peerConn.setLocalDescription(answer))
-      //   .then()
-      //   .catch(e => {
-      //     console.error("Cannot set Remote Description", e);
-      //   });
+    if (message.calloffer) {
+      console.log("WEBRTC: Receive SDP answer", from_jid, message);
+      this.createPeerConnection(from_jid);
+      this.state.peerConnections[from_jid]
+        .setRemoteDescription(new RTCSessionDescription(message.calloffer.sdp));
+      this.sendAnswer(from_jid);
+      return;
     }
 
     if (message.newicecandidate) {
@@ -260,15 +259,14 @@ class API {
       console.log("WEBRTC: Receive ICE candidate", from_jid, message);
       peerConn
         .addIceCandidate(candidate)
-        .catch(e => {
-          console.error("Cannot add ICE candidate", e);
-        });
+        .catch(e => { console.error("Cannot add ICE candidate", e); });
+      return;
     }
   }
 
   /** Retrieve the list of currently connected clients & updates the internal state */
   async listClients() {
-    const response = await window.fetch('/api/clients');
+    const response = await window.fetch('/api/roster');
     const allClients = await response.json();
     delete allClients[this.getBareJID()];
     this.dispatch({ type: 'srv.userList', data: allClients });
@@ -288,9 +286,14 @@ class API {
     return Object.keys(this.state.connectedTo);
   }
 
+  saveVideoElementForJID(remoteJID, node) {
+    console.log(`watevahhhhhhhhhhhh`);
+    this.dispatch({ type: 'm.videoEl', data: { api: this, remoteJID, node } });
+  }
+
   /** Dispatch message to connect to a given client */
-  connectTo(client) {
-    this.dispatch({ type: 'm.connect', data: client });
+  connectTo(remoteJID) {
+    this.dispatch({ type: 'm.connect', data: { api: this, remoteJID } });
   }
 
   /** Dispatch message to disconnect from a given client */
@@ -328,10 +331,6 @@ class API {
 
   /** Event triggered when the server sends this client a message */
   wsMessage(e) {
-    // console.log(`MESSAGE: ${JSON.stringify(e)}`);
-    // console.dir(e);
-    // return;
-
     if (e.type === "message") {
       const data = JSON.parse(e.data);
 
