@@ -252,8 +252,8 @@ impl GstWebRTCApp {
     fn add_peer_to_pipeline(&mut self, peer_id: &str) -> Result<(), Error> {
         let queue = gst::ElementFactory::make("queue", None)?;
         let webrtcbin = gst::ElementFactory::make("webrtcbin", Some(&peer_id))?;
-        webrtcbin.set_property_from_str("stun-server", STUN_SERVER);
-        webrtcbin.set_property_from_str("turn-server", TURN_SERVER);
+        // webrtcbin.set_property_from_str("stun-server", STUN_SERVER);
+        // webrtcbin.set_property_from_str("turn-server", TURN_SERVER);
         webrtcbin.set_property_from_str("bundle-policy", "max-bundle");
 
         debug!("Adding peer {:?} to pipeline", peer_id);
@@ -278,19 +278,68 @@ impl GstWebRTCApp {
 
         // values that will be moved into the closure below
         let channel = self.wsproxy.clone();
-        let peer_id = peer_id.to_string();
+        let peer_id0 = peer_id.to_string();
+        let from_jid = self.config.http.jid.clone();
+
+        webrtcbin.connect("on-negotiation-needed", false, move |values| {
+            let s_peer_id = peer_id0.clone();
+            let s_from_jid = from_jid.clone();
+            let s_channel = channel.clone();
+            let webrtcbin = values[0].get::<gst::Element>().unwrap().unwrap();
+            let webrtcbin0 = values[0].get::<gst::Element>().unwrap().unwrap();
+
+            debug!("on-negotiation-needed");
+            let promise = &gst::Promise::new_with_change_func(move |reply| {
+                debug!("create-offer-emitted");
+                let offer = reply
+                    .unwrap()
+                    .get_value("offer")
+                    .unwrap()
+                    .get::<gst_webrtc::WebRTCSessionDescription>()
+                    .unwrap()
+                    .unwrap();
+                webrtcbin0
+                    .emit("set-local-description", &[&offer, &None::<gst::Promise>])
+                    .unwrap();
+                s_channel
+                    .lock()
+                    .unwrap()
+                    .unbounded_send(protocol::Envelope {
+                        from_jid: s_from_jid,
+                        to_jid: s_peer_id,
+                        message: protocol::Message::CallOffer {
+                            sdp: protocol::SDP {
+                                type_: "offer".to_string(),
+                                sdp: offer.get_sdp().as_text().unwrap(),
+                            },
+                        },
+                    })
+                    .unwrap();
+            });
+
+            webrtcbin
+                .emit("create-offer", &[&None::<gst::Structure>, &promise])
+                .unwrap();
+
+            None
+        }).unwrap();
+
+        let channel = self.wsproxy.clone();
+        let peer_id0 = peer_id.to_string();
         let from_jid = self.config.http.jid.clone();
 
         webrtcbin.connect("on-ice-candidate", false, move |values| {
             let mlineindex = values[1].get_some::<u32>().expect("Invalid argument");
             let candidate = values[2].get::<String>().expect("Invalid argument")?;
 
+            debug!("on-ice-candidate: {:?}, {:?}", mlineindex, candidate);
+
             channel
                 .lock()
                 .unwrap()
                 .unbounded_send(protocol::Envelope {
                     from_jid: from_jid.to_string(),
-                    to_jid: peer_id.to_string(),
+                    to_jid: peer_id0.to_string(),
                     message: protocol::Message::NewIceCandidate {
                         candidate,
                         sdp_mline_index: mlineindex,
@@ -308,6 +357,8 @@ impl GstWebRTCApp {
             if pad.get_direction() != gst::PadDirection::Src {
                 return;
             }
+
+            debug!("connect-pad-added");
 
             let decodebin = gst::ElementFactory::make("decodebin", None).unwrap();
 
@@ -506,7 +557,9 @@ impl CaptureActor {
         match envelope.message {
             protocol::Message::CallOffer { sdp } => {
                 info!("Handle call offered by {}", peer_id);
-                self.gstapp.add_peer_to_pipeline(&peer_id)?;
+                if self.gstapp.pipeline.get_by_name(&peer_id).is_none() {
+                    self.gstapp.add_peer_to_pipeline(&peer_id)?;
+                }
                 if sdp.type_ == "offer" {
                     self.gstapp.handle_sdp_offer(sdp.sdp, &peer_id)?;
                 } else {
