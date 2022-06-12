@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import styled from 'styled-components';
 
 import Avatar from '@material-ui/core/Avatar';
@@ -24,7 +24,6 @@ import MicIcon from '@material-ui/icons/Mic';
 import StopIcon from '@material-ui/icons/Stop';
 
 import { useForm } from 'react-hook-form';
-import { store } from './store';
 import SpinnerIcon from './spinner';
 
 import { useAppContext } from './hooks/useAppContext';
@@ -71,16 +70,22 @@ const IconShell = styled.div`
 
 const iconStyle = { width: 16, height: 16 };
 
-function ClientItem({ primary, caps }) {
-  const { api } = React.useContext(store);
-  const isConnectedTo = false;//api.isConnectedTo(primary);
+function ClientItem({ jid, caps }) {
+  const {
+    state,
+    isClientConnected,
+    connectToClient,
+    disconnectFromClient,
+  } = useAppContext();
+  const isConnectedTo = isClientConnected(jid);
   const handleItemClick = () => isConnectedTo
-    ? api.disconnectFrom(primary)
-    : api.connectTo(primary);
+    ? disconnectFromClient(jid)
+    : connectToClient(jid);
+
   return (
     <ListItem button component="li" onClick={handleItemClick}>
       <ListItemText
-        primary={primary}
+        primary={jid}
         style={{ overflow: 'hidden', textOverflow: 'ellipsis', marginRight: 20 }}
       />
       <ListItemSecondaryAction>
@@ -93,7 +98,7 @@ function ClientItem({ primary, caps }) {
 
         {!isConnectedTo && caps.map(c =>
           ['produce:audio', 'produce:video'].includes(c) &&
-            <IconShell key={`key-cap-${primary}-${c}`}>
+            <IconShell key={`key-cap-${jid}-${c}`}>
               <Avatar>
                 {c === 'produce:video' && <VideocamIcon style={iconStyle} />}
                 {c === 'produce:audio' && <MicIcon style={iconStyle} />}
@@ -118,32 +123,63 @@ const ClientCardShell = styled.div`
 `;
 
 function ClientCard({ jid }) {
+  const { dispatch, state, webSocketSend } = useAppContext();
   const [loading, setLoading] = useState(false);
-  const [videoEl, setVideoEl] = useState(null);
-
-  // The render method won't show the video tag unless loading is
-  // false. With that, this method ends up also depending on the loading
-  // flag to be false as well.
-  const canvasRefCallback = React.useCallback(node => {
-    if (node !== null) {
-      setVideoEl(node);
-      setLoading(false);
-    }
-  }, []);
+  const videoEl = useRef(null);
 
   // Entry point of the WebRTC conversation. We create a peer connection
   // for intermediating the conversation with the peer identified by the
   // `client' parameter received above.
-  // React.useEffect(() => {
-  //   // api.(event) => {
-  //   //   console.log('Add stream');
-  //   //   videoEl.autoplay = true;
-  //   //   videoEl.srcObject = event.stream;
-  //   // }
-  //   // api.createPeerConnection(jid);
-  //   // api.sendOffer(jid);
-  //   // api.addPendingCandidates(jid);
-  // }, []);
+  useEffect(() => {
+    const pc = new RTCPeerConnection({});
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('ICE CONNECTION STATE: ', pc.iceConnectionState);
+    };
+
+    pc.onicecandidate = event => {
+      if (typeof event.candidate === "string") {
+        webSocketSend(jid, { newicecandidate: event });
+      }
+    };
+
+    pc.onaddstream = event => {
+      console.log(`onaddstream: ${event} ${videoEl.current}`);
+      if (videoEl.current) {
+        videoEl.current.autoplay = true;
+        videoEl.current.srcObject = event.stream;
+      }
+    };
+
+    pc.ontrack = event => {
+      console.log(`ontrack: ${event} ${videoEl.current}`);
+      if (videoEl.current) {
+        videoEl.current.autoplay = true;
+        videoEl.current.srcObject = event.streams[0];
+      }
+    };
+
+    pc.createOffer().then(
+      sdp => {
+        pc.setLocalDescription(sdp);
+        webSocketSend(jid, { calloffer: { sdp } });
+      },
+      error => {
+        console.error('Send offer failed: ', error);
+      },
+    );
+
+    dispatch({ type: actions.WRTC_PEER_CONNECTION, jid, pc })
+
+    // api.(event) => {
+    //   console.log('Add stream');
+    //   videoEl.autoplay = true;
+    //   videoEl.srcObject = event.stream;
+    // }
+    // api.createPeerConnection(jid);
+    // api.sendOffer(jid);
+    // api.addPendingCandidates(jid);
+  }, []);
 
   return (
     <Paper>
@@ -157,21 +193,10 @@ function ClientCard({ jid }) {
            autoPlay
            playsInline
            className="canvasEl"
-           ref={canvasRefCallback}>
+           ref={videoEl}>
          </video>}
       </ClientCardShell>
     </Paper>
-  );
-}
-
-function ConnectedClients({ connectedTo }) {
-  return (
-    <Grid container justify="center" spacing={2}>
-      {Object.keys(connectedTo).map((jid) =>
-        <Grid item key={`connected-client-${jid}`}>
-          <ClientCard jid={jid} />
-        </Grid>)}
-    </Grid>
   );
 }
 
@@ -205,9 +230,10 @@ const ListClientScreenShell = styled.div`
 
 function ListClientsScreen() {
   const [loading, setLoading] = useState(true);
-  const { state, dispatch } = useAppContext();
-  const { send } = useWebSocket();
+  const { state, dispatch, getConnectedClients } = useAppContext();
+  const connectedClients = getConnectedClients();
 
+  useWebSocket();
   useEffect(() => {
     serverAPI
       .getRoster(state.authToken)
@@ -235,7 +261,7 @@ function ListClientsScreen() {
             <List>
               {Object.entries(state.roster).map(([jid, caps], i) =>
                 <div key={`key-client-${jid}`}>
-                  <ClientItem primary={jid} caps={caps.sort()} />
+                  <ClientItem jid={jid} caps={caps.sort()} />
                   <Divider component="li" />
                 </div>)}
             </List>
@@ -243,8 +269,17 @@ function ListClientsScreen() {
 
           <Grid item xs={8}>
             <ListClientScreenShell>
-              {Object.keys(state.peersByID).length === 0 && <NoClientConnectedMessage />}
-              {Object.keys(state.peersByID).length > 0 && <ConnectedClients connectedTo={state.peersByID} />}
+              {connectedClients.length === 0 &&
+               <NoClientConnectedMessage />}
+
+              {connectedClients.length > 0 &&
+               <Grid container justify="center" spacing={2}>
+                 {connectedClients.map(jid =>
+                   <Grid item key={`connected-client-${jid}`}>
+                     <ClientCard jid={jid} />
+                   </Grid>)}
+               </Grid>}
+
             </ListClientScreenShell>
           </Grid>
         </Grid>

@@ -1,25 +1,37 @@
-import { createContext, useReducer } from 'react';
+import { createContext, useReducer, createRef } from 'react';
 import { AuthState } from '../services/auth';
 import { createReducer } from './reducers';
 
-// Default values for the webSocket state field
-const initialWebSocketState = {
-  socket: null,
-  error: null,
-  settings: {},
-}
+/// State of webrtc connections.  There is no need to describe a value
+/// for the `Disconnected' state, as this is implied when a given JID
+/// isn't present in the mapping to peer states within `wsStateById'.
+export const PeerState = {
+  Connecting: 1 << 1,
+  Connected:  1 << 2,
+};
 
 /// Values the application starts with.  Will be overrided by other
 /// storage types, like cookies for authentication tokens and local or
 /// session storage for application data.
 const initialState = {
+  /// where are we in the authentication process
   authState: AuthState.Anonymous,
+  /// struct with both http status and http status text of the
+  /// authentication call
   authError: null,
+  /// authentication token acquired after an API call to the backend
   authToken: null,
-  authJID:   null,
-  webSocket: initialWebSocketState,
-  peersByID: {},
-  roster:    {},
+  /// the JID of the local user
+  authJID: null,
+  /// map from JID's to array of strings with client capabilities
+  roster: {},
+  /// field that will hold the WebSocket instance
+  ws: createRef(),
+  /// map of JID's to RTCPeerConnection instances
+  wsPeersByID: createRef(),
+  /// map of JID's to PeerState entries.  Being `undefined' means
+  // being disconnected
+  wsStateByID: {},
 };
 
 /// Where globally accessible data of the application is kept
