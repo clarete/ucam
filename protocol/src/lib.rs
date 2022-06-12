@@ -61,11 +61,3 @@ pub enum Message {
     /// Send the list of capabilities the client has available to the server
     Capabilities(HashSet<String>),
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
