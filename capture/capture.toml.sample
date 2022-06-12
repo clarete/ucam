@@ -1,0 +1,11 @@
+[http]
+server = 'wss://example.com:7070/ws'
+jid = 'user@example.com'
+key = '/path/to/key.pem'
+cert = '/path/to/crt.pem'
+cacert = '/path/to/ca.pem'
+
+[logging]
+actix_server = 'info'
+actix_web = 'info'
+capture = 'info'
