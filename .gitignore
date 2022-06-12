@@ -1,0 +1,15 @@
+# rust
+vendor/
+target/
+
+# node
+node_modules/
+
+# application
+certs/
+server/server.toml
+capture/capture.toml
+storage/storage.toml
+
+# others
+core
