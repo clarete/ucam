@@ -1,5 +1,4 @@
 import { AuthState } from '../services/auth';
-import { newWebSocketState } from '../services/websocket';
 
 export const actions = {
   AUTH_LOADING: "AUTH_LOADING",

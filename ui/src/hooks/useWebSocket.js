@@ -3,7 +3,7 @@ import { useAppContext } from './useAppContext';
 import { actions } from '../context/reducers';
 
 export function useWebSocket() {
-  const { state, dispatch } = useAppContext();
+  const { state, dispatch, webSocketSend } = useAppContext();
   const address = webSocketUrl(state);
   const webSocket = useRef(null);
 
@@ -13,7 +13,7 @@ export function useWebSocket() {
     // don't say we can send media for now
     const capabilities = ['consume:audio', 'consume:video'];
     ws.addEventListener('open', event => {
-        // send({ capabilities }, state.authJID)
+      webSocketSend(state.authJID, { capabilities });
     });
     ws.addEventListener('close', event => dispatch({ type: actions.WSCK_ON_CLOSE }));
     ws.addEventListener('error', error => dispatch({ type: actions.WSCK_ON_ERROR, error }));
@@ -66,31 +66,6 @@ function makeMessageHandler(state, dispatch) {
 
       if (message.calloffer !== undefined) {
         console.log("WEBRTC: Receive SDP offer", fromJID, message);
-        // this.createPeerConnection(fromJID);
-        // this.state.peerConnections[fromJID]
-        //   .setRemoteDescription(new RTCSessionDescription(message.calloffer.sdp));
-        // this.sendAnswer(fromJID);
-
-        // if (wsPeer === undefined) {
-        //   const pc = new RTCPeerConnection({});
-        //   pc.onicecandidate = wsPeer.onicecandidate;
-        //   pc.onaddstream = wsPeer.onaddstream;
-        //   pc.ontrack = wsPeer.ontrack;
-        //   pc.setRemoteDescription(new RTCSessionDescription(message.calloffer.sdp));
-        //   pc.createAnswer().then(
-        //     sdp => {
-        //       pc.setLocalDescription(sdp);
-        //       console.log(`Local description set for ${fromJID}`);
-        //       dispatch({ type: actions.WSCK_SEND, fromJID, message: { calloffer: { sdp }} });
-        //     },
-        //     error => {
-        //       console.error('Send answer failed: ', error);
-        //     },
-        //   );
-        //   dispatch({ type: actions.WRTC_PEER_CONNECTION, jid: fromJID, pc })
-        //   return;
-        // }
-
         wsPeer
           .setRemoteDescription(new RTCSessionDescription(message.calloffer.sdp))
           .then(() => wsPeer.createAnswer())
