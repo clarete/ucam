@@ -121,6 +121,7 @@ const ClientCardShell = styled.div`
   & .canvasEl {
     background-color: #aaa;
     border-radius: 5px;
+    border-color: #000;
   }
 `;
 
@@ -138,10 +139,12 @@ function ClientCard({ jid }) {
       //   urls: "stun:stun.l.google.com"
       // }]
     });
-    pc.onconnectionstatechange = (event) => {
+
+    pc.onconnectionstatechange = event => {
       console.log(`onconnectionstatechange: state=${pc.connectionState}`);
       console.dir(event);
     };
+
     pc.oniceconnectionstatechange = event => {
       console.log(`oniceconnectionstatechange: state=${pc.iceConnectionState}`);
       console.dir(event);
@@ -151,6 +154,7 @@ function ClientCard({ jid }) {
         pc.restartIce();
       }
     };
+
     pc.onicecandidate = event => {
       console.log(`onicecandidate`);
       console.dir(event);
@@ -159,12 +163,7 @@ function ClientCard({ jid }) {
         webSocketSend(jid, { ice: event.candidate });
       }
     };
-    // pc.onaddstream = event => {
-    //   console.log(`onaddstream: ${event} ${videoEl.current}`);
-    //   if (videoEl.current) {
-    //     videoEl.current.srcObject = event.stream;
-    //   }
-    // };
+
     pc.ontrack = event => {
       console.log(`ontrack: ${videoEl.current}`);
       if (videoEl.current && videoEl.current.srcObject !== event.streams[0]) {
@@ -264,7 +263,7 @@ function ListClientsScreen() {
     return <Loading />;
 
   if (Object.entries(state.roster).length === 0)
-    return <NobodyToTalkMessage />
+    return <NobodyToTalkMessage />;
 
   return (
     <CenterCenterShell>
