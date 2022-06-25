@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { useEffect, useState, useRef } from 'react';
-import styled from 'styled-components';
+import { useForm } from 'react-hook-form';
 
+import styled from 'styled-components';
 import Avatar from '@material-ui/core/Avatar';
 import Grid from '@material-ui/core/Grid';
 import Button from '@material-ui/core/Button';
@@ -23,7 +24,6 @@ import VideocamIcon from '@material-ui/icons/Videocam';
 import MicIcon from '@material-ui/icons/Mic';
 import StopIcon from '@material-ui/icons/Stop';
 
-import { useForm } from 'react-hook-form';
 import SpinnerIcon from './spinner';
 
 import { useAppContext } from './hooks/useAppContext';
@@ -131,54 +131,67 @@ function ClientCard({ jid }) {
   // for intermediating the conversation with the peer identified by the
   // `client' parameter received above.
   useEffect(() => {
-    const pc = new RTCPeerConnection({});
-
-    pc.oniceconnectionstatechange = () => {
-      console.log('ICE CONNECTION STATE: ', pc.iceConnectionState);
+    const pc = new RTCPeerConnection({
+      // iceServers: [{
+      //   urls: "stun:stun.l.google.com"
+      // }]
+    });
+    pc.onconnectionstatechange = (event) => {
+      console.log(`onconnectionstatechange: state=${pc.connectionState}`);
+      console.dir(event);
     };
+    pc.oniceconnectionstatechange = event => {
+      console.log(`oniceconnectionstatechange: state=${pc.iceConnectionState}`);
+      console.dir(event);
 
+      if (pc.iceConnectionState === "failed") {
+        console.log(`restart ice`);
+        pc.restartIce();
+      }
+    };
     pc.onicecandidate = event => {
-      if (typeof event.candidate === "string") {
-        webSocketSend(jid, { newicecandidate: event });
+      console.log(`onicecandidate`);
+      console.dir(event);
+
+      if (event.candidate !== null) {
+        webSocketSend(jid, { ice: event });
       }
     };
-
-    pc.onaddstream = event => {
-      console.log(`onaddstream: ${event} ${videoEl.current}`);
-      if (videoEl.current) {
-        videoEl.current.autoplay = true;
-        videoEl.current.srcObject = event.stream;
-      }
-    };
-
+    // pc.onaddstream = event => {
+    //   console.log(`onaddstream: ${event} ${videoEl.current}`);
+    //   if (videoEl.current) {
+    //     videoEl.current.srcObject = event.stream;
+    //   }
+    // };
     pc.ontrack = event => {
-      console.log(`ontrack: ${event} ${videoEl.current}`);
-      if (videoEl.current) {
-        videoEl.current.autoplay = true;
+      console.log(`ontrack: ${videoEl.current}`);
+      if (videoEl.current && videoEl.current.srcObject !== event.streams[0]) {
+        console.dir(event);
         videoEl.current.srcObject = event.streams[0];
       }
     };
 
-    pc.createOffer().then(
-      sdp => {
-        pc.setLocalDescription(sdp);
-        webSocketSend(jid, { calloffer: { sdp } });
-      },
-      error => {
-        console.error('Send offer failed: ', error);
-      },
-    );
+    const createOffer = () => {
+      pc.createOffer({
+        offerToReceiveAudio: false, //true,
+        offerToReceiveVideo: true,
+        iceRestart: false, //true,
+      })
+        .then(sdp => pc.setLocalDescription(sdp))
+        .then(() => webSocketSend(jid, { sdp: pc.localDescription }))
+        .catch(error => console.error('Send offer failed: ', error));
+    };
+
+    pc.onnegotiationneeded = event => {
+      console.log(`onnegotiationneeded`);
+      console.dir(event);
+      createOffer();
+    };
+
+    webSocketSend(jid, 'callrequest');
 
     dispatch({ type: actions.WRTC_PEER_CONNECTION, jid, pc })
 
-    // api.(event) => {
-    //   console.log('Add stream');
-    //   videoEl.autoplay = true;
-    //   videoEl.srcObject = event.stream;
-    // }
-    // api.createPeerConnection(jid);
-    // api.sendOffer(jid);
-    // api.addPendingCandidates(jid);
   }, []);
 
   return (
@@ -190,11 +203,13 @@ function ClientCard({ jid }) {
 
         {!loading &&
          <video
+           controls
            autoPlay
            playsInline
-           className="canvasEl"
+           className="video"
            ref={videoEl}>
-         </video>}
+         </video>
+        }
       </ClientCardShell>
     </Paper>
   );

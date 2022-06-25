@@ -33,6 +33,8 @@ export function useAppContext() {
       console.error(`this is messed up: trying to send message without a reference to a websocket instance`);
       return;
     }
+    console.log(`Send message to=${toJID} msg=${JSON.stringify(message)}`);
+
     state.ws.current.send(JSON.stringify({
       from_jid: state.authJID,
       to_jid: toJID || "",

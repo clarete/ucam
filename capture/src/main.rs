@@ -249,14 +249,32 @@ impl App {
                 capabilities: _capabilities,
             } => self.add_peer(&envelope.from_jid, false),
             protocol::Message::ClientOffline => self.remove_peer(&envelope.from_jid),
-            protocol::Message::CallOffer { sdp } => {
-                info!("Handle call offered by {}", envelope.from_jid);
-                match self.get_peer(&envelope.from_jid) {
-                    Some(peer) => peer.handle_sdp(&sdp.type_, &sdp.sdp),
-                    None => bail!("Can't find peer {}", envelope.from_jid),
+            protocol::Message::CallRequest => {
+                let peers = self.peers.lock().unwrap();
+
+                if let Some(peer) = peers.get(&envelope.from_jid) {
+                    info!("call request from={}", envelope.from_jid);
+
+                    if let Err(err) = peer.on_negotiation_needed() {
+                        gst_element_error!(
+                            peer.bin,
+                            gst::LibraryError::Failed,
+                            ("Failed to negotiate: {:?}", err)
+                        );
+                    }
                 }
+
+                Ok(())
             }
-            protocol::Message::NewIceCandidate {
+            protocol::Message::SDP { type_, sdp } => {
+                info!("Handle call offer by {}", envelope.from_jid);
+                let jid = envelope.from_jid.clone();
+                let peer = self
+                    .get_peer(&envelope.from_jid)
+                    .ok_or_else(move || Error::new_proto(format!("Can't find peer: {}", jid)))?;
+                peer.handle_sdp(&type_, &sdp)
+            }
+            protocol::Message::ICE {
                 sdp_mline_index,
                 candidate,
             } => {

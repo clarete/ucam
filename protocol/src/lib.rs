@@ -18,15 +18,6 @@ pub struct Envelope {
     pub message: Message,
 }
 
-/// Struct with SDP fields
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub struct SDP {
-    #[serde(rename = "type")]
-    pub type_: String,
-    pub sdp: String,
-}
-
 /// Message is the struct that carries the different types of
 /// information clients exchange with the server and other clients
 #[derive(Debug, Deserialize, Serialize)]
@@ -38,26 +29,29 @@ pub enum Message {
     /// Notify that a known JID has gone offline
     ClientOffline,
 
-    /// Send a call offer to the remote peer
-    CallOffer { sdp: SDP },
+    /// Send the list of capabilities the client has available to the server
+    Capabilities(HashSet<String>),
 
-    /// Send the local description to the remote peer when answering
-    /// to a call started with `CallOffer`.
-    CallAnswer { sdp: SDP },
+    /// Exchange text messages between local and remote peers
+    Chat(String),
 
-    /// Tell the remote peer a video session is going down
-    HangUp,
+    /// Ask a remote peer to start a call with self
+    CallRequest,
+
+    /// Exchange SDP messages between peers
+    SDP {
+        #[serde(rename = "type")]
+        type_: String,
+        sdp: String,
+    },
 
     /// Exchange a ICE candidates between local and remote peers
-    NewIceCandidate {
+    ICE {
         candidate: String,
         #[serde(rename = "sdpMLineIndex")]
         sdp_mline_index: u32,
     },
 
-    /// Exchange text messages between local and remote peers
-    Chat(String),
-
-    /// Send the list of capabilities the client has available to the server
-    Capabilities(HashSet<String>),
+    /// Tell the remote peer a video session is going down
+    HangUp,
 }
