@@ -104,6 +104,7 @@ struct PeerWeak(Weak<PeerInner>);
 #[derive(Debug)]
 struct PeerInner {
     peer_id: String,
+    local_id: String,
     bin: gst::Bin,
     webrtcbin: gst::Element,
     send_msg_tx: Arc<Mutex<mpsc::UnboundedSender<protocol::Envelope>>>,
@@ -371,6 +372,7 @@ impl App {
 
         let peer = Peer(Arc::new(PeerInner {
             peer_id: peer_id.clone(),
+            local_id: "cam001@studio.loc".to_string(),
             bin: peer_bin,
             webrtcbin,
             send_msg_tx: self.send_msg_tx.clone(),
@@ -640,11 +642,24 @@ impl Peer {
         PeerWeak(Arc::downgrade(&self.0))
     }
 
+    // Enqueue a message to be sent via websocket
+    fn send(&self, message: protocol::Message) -> Result<(), Error> {
+        Ok(self
+            .send_msg_tx
+            .lock()
+            .unwrap()
+            .unbounded_send(protocol::Envelope {
+                from_jid: self.local_id.clone(),
+                to_jid: self.peer_id.clone(),
+                message,
+            })?)
+    }
+
     // Whenever webrtcbin tells us that (re-)negotiation is needed, simply ask
     // for a new offer SDP from webrtcbin without any customization and then
     // asynchronously send it to the peer via the WebSocket connection
     fn on_negotiation_needed(&self) -> Result<(), Error> {
-        println!("starting negotiation with peer {}", self.peer_id);
+        debug!("on_negotiation_needed: self={}", self.peer_id);
 
         let peer_clone = self.downgrade();
         let promise = gst::Promise::new_with_change_func(move |r| {
@@ -711,22 +726,10 @@ impl Peer {
             offer.get_sdp().as_text().unwrap()
         );
 
-        self.send_msg_tx
-            .lock()
-            .unwrap()
-            .unbounded_send(protocol::Envelope {
-                from_jid: "cam001@studio.loc".to_string(),
-                to_jid: self.peer_id.clone(),
-                message: protocol::Message::CallOffer {
-                    sdp: protocol::SDP {
-                        type_: "offer".to_string(),
-                        sdp: offer.get_sdp().as_text().unwrap(),
-                    },
-                },
-            })
-            .with_context(|_| format!("Failed to send SDP offer"))?;
-
-        Ok(())
+        self.send(protocol::Message::SDP {
+            type_: "offer".to_string(),
+            sdp: offer.get_sdp().as_text().unwrap(),
+        })
     }
 
     // Once webrtcbin has create the answer SDP for us, handle it by sending it to the peer via the
@@ -760,47 +763,27 @@ impl Peer {
 
         println!("sending SDP {} to peer {}: {}", type_, self.peer_id, sdp);
 
-        self.send_msg_tx
-            .lock()
-            .unwrap()
-            .unbounded_send(protocol::Envelope {
-                from_jid: "cam001@studio.loc".to_string(),
-                to_jid: self.peer_id.clone(),
-                message: protocol::Message::CallAnswer {
-                    sdp: protocol::SDP { type_, sdp },
-                },
-            })
-            .with_context(|_| format!("Failed to send SDP answer"))?;
-
-        Ok(())
+        self.send(protocol::Message::SDP { type_, sdp })
     }
 
     // Handle incoming SDP answers from the peer
     fn handle_sdp(&self, type_: &str, sdp: &str) -> Result<(), Error> {
         if type_ == "answer" {
-            print!("Received answer:\n{}\n", sdp);
-
-            let ret = match gst_sdp::SDPMessage::parse_buffer(sdp.as_bytes()) {
-                Ok(r) => r,
-                Err(_) => bail!("Failed to parse SDP answer"),
-            };
-            // .map_err(|_| bail!("Failed to parse SDP answer"))?;
+            debug!("Received answer: {}", sdp);
+            let ret = gst_sdp::SDPMessage::parse_buffer(sdp.as_bytes())
+                .map_err(|_| Error::new_proto("Error parsing answer".to_string()))?;
 
             let answer =
                 gst_webrtc::WebRTCSessionDescription::new(gst_webrtc::WebRTCSDPType::Answer, ret);
 
             self.webrtcbin
-                .emit("set-remote-description", &[&answer, &None::<gst::Promise>])
-                .unwrap();
+                .emit("set-remote-description", &[&answer, &None::<gst::Promise>])?;
 
             Ok(())
         } else if type_ == "offer" {
-            print!("Received offer:\n{}\n", sdp);
-
-            let ret = match gst_sdp::SDPMessage::parse_buffer(sdp.as_bytes()) {
-                Ok(r) => r,
-                Err(_) => bail!("Failed to parse SDP offer"),
-            };
+            debug!("Received offer: {}", sdp);
+            let ret = gst_sdp::SDPMessage::parse_buffer(sdp.as_bytes())
+                .map_err(|_| Error::new_proto("Error parsing offer".to_string()))?;
 
             // And then asynchronously start our pipeline and do the next steps. The
             // pipeline needs to be started before we can create an answer
@@ -868,25 +851,17 @@ impl Peer {
     // message
     fn on_ice_candidate(&self, sdp_mline_index: u32, candidate: String) -> Result<(), Error> {
         debug!("on_ice_candidate: {}", candidate);
-        self.send_msg_tx
-            .lock()
-            .unwrap()
-            .unbounded_send(protocol::Envelope {
-                from_jid: "cam001@studio.loc".to_string(),
-                to_jid: self.peer_id.clone(),
-                message: protocol::Message::NewIceCandidate {
-                    candidate,
-                    sdp_mline_index,
-                },
-            })
-            .with_context(|_| format!("Failed to send ICE candidate"))?;
-
-        Ok(())
+        self.send(protocol::Message::ICE {
+            candidate,
+            sdp_mline_index,
+        })
     }
 
     // Whenever there's a new incoming, encoded stream from the peer create a new decodebin
     // and audio/video sink depending on the stream type
     fn on_incoming_stream(&self, pad: &gst::Pad) -> Result<(), Error> {
+        debug!("on_incoming_stream: {}", pad.get_name());
+
         // Early return for the source pads we're adding ourselves
         if pad.get_direction() != gst::PadDirection::Src {
             return Ok(());
