@@ -18,7 +18,8 @@
     "react": "^16.14.0",
     "react-dom": "^16.14.0",
     "react-hook-form": "^4.10.2",
-    "react-virtualized": "^9.22.3"
+    "react-virtualized": "^9.22.3",
+    "webrtc-adapter": "^8.1.1"
   },
   "devDependencies": {
     "@babel/core": "^7.17.12",

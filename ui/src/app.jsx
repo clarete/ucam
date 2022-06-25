@@ -34,6 +34,8 @@ import { actions } from './context/reducers';
 import { AuthState } from './services/auth';
 import * as serverAPI from './services/api';
 
+import adapter from 'webrtc-adapter';
+
 const CenterCenterShell = styled.div`
   display: grid;
   height: 100vh;
