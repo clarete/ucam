@@ -7,18 +7,12 @@ use std::time::Duration;
 extern crate log;
 
 use bytes::Bytes;
-#[macro_use]
-extern crate failure;
-use failure::{Error, Fail};
 use futures::channel::mpsc;
 use futures::stream::{SplitSink, Stream, StreamExt};
 use openssl::ssl::{SslConnector, SslMethod};
 
-use crate::failure::ResultExt;
-
 use gst::gst_element_error;
 use gst::{self, prelude::*};
-use lazy_static::lazy_static;
 use serde_derive::Deserialize;
 
 use actix::io::SinkWrite;
@@ -31,6 +25,10 @@ use awc::{
 };
 
 use protocol;
+
+mod err;
+
+use err::{Error, ErrorType};
 
 const STUN_SERVER: &str = "stun://stun.l.google.com:19302";
 const TURN_SERVER: &str = "turn://foo:bar@webrtc.nirbheek.in:3478";
@@ -50,51 +48,6 @@ macro_rules! upgrade_weak {
         upgrade_weak!($x, ())
     };
 }
-
-lazy_static! {
-    static ref RTP_CAPS_VP8: gst::Caps = {
-        gst::Caps::new_simple(
-            "application/x-rtp",
-            &[
-                ("media", &"video"),
-                ("encoding-name", &"VP8"),
-                ("payload", &(96i32)),
-            ],
-        )
-    };
-}
-
-#[derive(Debug, Fail)]
-#[fail(display = "Missing elements {:?}", _0)]
-struct MissingElements(Vec<&'static str>);
-
-// #[derive(Debug, Fail)]
-// #[fail(display = "Failed to create answer")]
-// struct NullAnswer;
-
-// #[derive(Debug, Fail)]
-// #[fail(display = "Failed to get bus")]
-// struct NullBus;
-
-#[derive(Debug, Fail)]
-#[fail(display = "Failed to retrieve element \"{}\"", _0)]
-struct NullElement(&'static str);
-
-// #[derive(Debug, Fail)]
-// #[fail(display = "Failed to create offer")]
-// struct NullOffer;
-
-#[derive(Debug, Fail)]
-#[fail(display = "Failed to create pad \"{}\"", _0)]
-struct NullPad(&'static str);
-
-// #[derive(Debug, Fail)]
-// #[fail(display = "Failed to create reply")]
-// struct NullReply;
-
-// #[derive(Debug, Fail)]
-// #[fail(display = "Failed to create session description")]
-// struct NullSessionDescription;
 
 #[derive(Clone, Debug, Deserialize)]
 struct ConfigHTTP {
@@ -241,7 +194,9 @@ impl App {
             .expect("can't find audio-mixer");
 
         // Create a stream for handling the GStreamer message asynchronously
-        let bus = pipeline.get_bus().unwrap();
+        let bus = pipeline
+            .get_bus()
+            .expect("Pipeline without bus. Shouldn't happen!");
         let send_gst_msg_rx = bus.stream();
 
         // Channel for outgoing WebSocket messages from other threads
@@ -306,14 +261,13 @@ impl App {
                 candidate,
             } => {
                 info!("Handle ICE candidate from {}", envelope.from_jid);
-                match self.get_peer(&envelope.from_jid) {
-                    Some(peer) => peer.handle_ice(sdp_mline_index, &candidate),
-                    None => bail!("Can't find peer {}", envelope.from_jid),
-                }
+                let jid = envelope.from_jid.clone();
+                let peer = self
+                    .get_peer(&envelope.from_jid)
+                    .ok_or_else(move || Error::new_proto(format!("Can't find peer: {}", jid)))?;
+                peer.handle_ice(sdp_mline_index, &candidate)
             }
-            _ => {
-                bail!("WAT ARE YOU DOIN");
-            }
+            msg @ _ => Err(Error::new_proto(format!("Unknown message: {:?}", msg))),
         }
     }
 
@@ -322,16 +276,18 @@ impl App {
         use gst::message::MessageView;
 
         match message.view() {
-            MessageView::Error(err) => bail!(
-                "Error from element {}: {} ({})",
-                err.get_src()
-                    .map(|s| String::from(s.get_path_string()))
-                    .unwrap_or_else(|| String::from("None")),
-                err.get_error(),
-                err.get_debug().unwrap_or_else(|| String::from("None")),
-            ),
+            MessageView::Error(err) => {
+                return Err(Error::new_gst(format!(
+                    "Error from element {}: {} ({})",
+                    err.get_src()
+                        .map(|s| String::from(s.get_path_string()))
+                        .unwrap_or_else(|| String::from("None")),
+                    err.get_error(),
+                    err.get_debug().unwrap_or_else(|| String::from("None")),
+                )));
+            }
             MessageView::Warning(warning) => {
-                println!("Warning: \"{}\"", warning.get_debug().unwrap());
+                warn!("{}", warning.get_debug().unwrap());
             }
             _ => (),
         }
@@ -349,11 +305,12 @@ impl App {
 
     // Add this new peer and if requested, send the offer to it
     fn add_peer(&mut self, peer: &str, offer: bool) -> Result<(), Error> {
-        println!("Adding peer {}", peer);
+        debug!("Adding peer {}", peer);
         let peer_id = peer.to_string();
         let mut peers = self.peers.lock().unwrap();
         if peers.contains_key(&peer_id) {
-            bail!("Peer {} already called", peer_id);
+            warn!("Peer {} already called", peer_id);
+            return Ok(());
         }
 
         let peer_bin = gst::parse_bin_from_description(
@@ -434,8 +391,6 @@ impl App {
         let peer_clone = peer.downgrade();
         peer.webrtcbin
             .connect("on-ice-candidate", false, move |values| {
-                println!("on-ice-candidate");
-
                 let _webrtc = values[0].get::<gst::Element>().expect("Invalid argument");
                 let mlineindex = values[1].get_some::<u32>().expect("Invalid argument");
                 let candidate = values[2]
@@ -460,6 +415,8 @@ impl App {
         // Whenever there is a new stream incoming from the peer, handle it
         let peer_clone = peer.downgrade();
         peer.webrtcbin.connect_pad_added(move |_webrtc, pad| {
+            debug!("webrtcbin.connect_pad_added");
+
             let peer = upgrade_weak!(peer_clone);
 
             if let Err(err) = peer.on_incoming_stream(pad) {
@@ -474,6 +431,8 @@ impl App {
         // Whenever a decoded stream comes available, handle it and connect it to the mixers
         let app_clone = self.downgrade();
         peer.bin.connect_pad_added(move |_bin, pad| {
+            debug!("connect_pad_added: {}", pad.get_name());
+
             let app = upgrade_weak!(app_clone);
 
             if pad.get_name() == "audio_src" {
@@ -555,8 +514,7 @@ impl App {
 
     // Remove this peer
     fn remove_peer(&self, peer: &str) -> Result<(), Error> {
-        println!("Removing peer {}", peer);
-        // let peer_id = str::parse::<u32>(peer).with_context(|_| format!("Can't parse peer id"))?;
+        info!("Removing peer {}", peer);
         let peer_id = peer.to_string();
         let mut peers = self.peers.lock().unwrap();
         if let Some(peer) = peers.remove(&peer_id) {
@@ -602,7 +560,7 @@ impl App {
                 let _ = app.pipeline.remove(&peer.bin);
                 let _ = peer.bin.set_state(gst::State::Null);
 
-                println!("Removed peer {}", peer.peer_id);
+                info!("Removed peer {}", peer.peer_id);
             });
         }
 
@@ -710,10 +668,13 @@ impl Peer {
         let reply = match reply {
             Ok(Some(reply)) => reply,
             Ok(None) => {
-                bail!("Offer creation future got no reponse");
+                return Err(Error::new_gst(
+                    "Offer creation future got no response".to_string(),
+                ));
             }
             Err(err) => {
-                bail!("Offer creation future got error reponse: {:?}", err);
+                let msg = format!("Offer creation future got error reponse: {:?}", err);
+                return Err(Error::new_gst(msg));
             }
         };
 
@@ -759,19 +720,18 @@ impl Peer {
         let reply = match reply {
             Ok(Some(reply)) => reply,
             Ok(None) => {
-                bail!("Answer creation future got no reponse");
+                return Err(Error::new_gst(
+                    "Answer creation future got no response".to_string(),
+                ));
             }
             Err(err) => {
-                bail!("Answer creation future got error reponse: {:?}", err);
+                let msg = format!("Answer creation future got error reponse: {:?}", err);
+                return Err(Error::new_gst(msg));
             }
         };
 
-        let answer = reply
-            .get_value("answer")
-            .unwrap()
-            .get::<gst_webrtc::WebRTCSessionDescription>()
-            .expect("Invalid argument")
-            .unwrap();
+        let answer = get_answer_from_reply(reply)?;
+
         self.webrtcbin
             .emit("set-local-description", &[&answer, &None::<gst::Promise>])
             .unwrap();
@@ -871,22 +831,25 @@ impl Peer {
 
             Ok(())
         } else {
-            bail!("Sdp type is not \"answer\" but \"{}\"", type_)
+            Err(Error::new_proto(format!(
+                "Unknown SDP message type: {:?}",
+                type_
+            )))
         }
     }
 
     // Handle incoming ICE candidates from the peer by passing them to webrtcbin
     fn handle_ice(&self, sdp_mline_index: u32, candidate: &str) -> Result<(), Error> {
         self.webrtcbin
-            .emit("add-ice-candidate", &[&sdp_mline_index, &candidate])
-            .unwrap();
-
+            .emit("add-ice-candidate", &[&sdp_mline_index, &candidate])?
+            .ok_or_else(|| Error::new_gst("can't emit add-ice-candidate".to_string()))?;
         Ok(())
     }
 
     // Asynchronously send ICE candidates to the peer via the WebSocket connection as a JSON
     // message
     fn on_ice_candidate(&self, sdp_mline_index: u32, candidate: String) -> Result<(), Error> {
+        debug!("on_ice_candidate: {}", candidate);
         self.send_msg_tx
             .lock()
             .unwrap()
@@ -913,10 +876,10 @@ impl Peer {
 
         let caps = pad.get_current_caps().unwrap();
         let s = caps.get_structure(0).unwrap();
-        let media_type = match s.get::<&str>("media").expect("Invalid type") {
-            Some(mt) => mt,
-            None => bail!("no media type in caps {:?}", caps),
-        };
+        let media_type = s
+            .get::<&str>("media")
+            .expect("Invalid type")
+            .ok_or_else(|| Error::new_proto(format!("no media type in caps {:?}", caps)))?;
 
         let conv = if media_type == "video" {
             gst::parse_bin_from_description(
@@ -933,7 +896,7 @@ impl Peer {
                 false,
             )?
         } else {
-            println!("Unknown pad {:?}, ignoring", pad);
+            warn!("Unknown pad {:?}, ignoring", pad);
             return Ok(());
         };
 
@@ -949,11 +912,8 @@ impl Peer {
         conv.add_pad(&srcpad).unwrap();
 
         self.bin.add(&conv).unwrap();
-        conv.sync_state_with_parent()
-            .with_context(|_| format!("can't start sink for stream {:?}", caps))?;
-
-        pad.link(&sinkpad)
-            .with_context(|_| format!("can't link sink for stream {:?}", caps))?;
+        conv.sync_state_with_parent()?;
+        pad.link(&sinkpad)?;
 
         // And then add a new ghost pad to the peer bin that proxies the source pad we added above
         if media_type == "video" {
@@ -968,6 +928,16 @@ impl Peer {
 
         Ok(())
     }
+}
+
+fn get_answer_from_reply(
+    reply: &gst::StructureRef,
+) -> Result<gst_webrtc::WebRTCSessionDescription, Error> {
+    reply
+        .get_value("answer")?
+        .get::<gst_webrtc::WebRTCSessionDescription>()
+        .expect("Invalid Argument")
+        .ok_or_else(|| Error::new_proto("Can't read answer from reply".to_string()))
 }
 
 // At least shut down the bin here if it didn't happen so far
@@ -987,23 +957,24 @@ async fn get_ws_client(config: &Config) -> Result<Framed<BoxedSocket, Codec>, Er
         .timeout(Duration::from_secs(15))
         .ssl(ssl_builder.build())
         .finish();
-    let client = Client::build()
+    let (_, framed) = Client::build()
         .connector(connector)
         .finish()
         .ws(&config.http.server)
         .bearer_auth(&token)
         .connect()
-        .await;
-    match client {
-        Ok((_, framed)) => Ok(framed),
-        Err(e) => bail!("Can't connect to server: {}", e),
-    }
+        .await
+        .map_err(|e| Error::new_io(format!("Fudeu criando o cliente: {}", e)))?;
+    Ok(framed)
 }
 
 fn load_config(args: &Vec<String>) -> Result<Config, Error> {
     if args.len() != 2 {
         // Can't move on without the configuration file
-        bail!(format!("Usage: {} CONFIG-FILE", args[0]))
+        Err(Error::new(
+            ErrorType::Input,
+            format!("Usage: {} CONFIG-FILE", args[0]),
+        ))
     } else {
         // Let's try to read the file contents
         let path = std::path::Path::new(&args[1]);
@@ -1084,7 +1055,7 @@ fn check_plugins() -> Result<(), Error> {
         .collect::<Vec<_>>();
 
     if !missing.is_empty() {
-        bail!("Missing plugins: {:?}", missing);
+        Err(Error::new_gst(format!("Missing plugins: {:?}", missing)))
     } else {
         Ok(())
     }
@@ -1112,7 +1083,7 @@ impl Actor for CaptureActor {
     }
 
     fn stopped(&mut self, _: &mut Context<Self>) {
-        println!("Disconnected");
+        debug!("Disconnected");
         // Stop application on disconnect
         System::current().stop();
     }
