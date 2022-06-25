@@ -156,7 +156,7 @@ function ClientCard({ jid }) {
       console.dir(event);
 
       if (event.candidate !== null) {
-        webSocketSend(jid, { ice: event });
+        webSocketSend(jid, { ice: event.candidate });
       }
     };
     // pc.onaddstream = event => {
