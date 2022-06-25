@@ -308,6 +308,11 @@ impl App {
             MessageView::Warning(warning) => {
                 warn!("{}", warning.get_debug().unwrap());
             }
+            MessageView::StateChanged(state_changed) => {
+                let current = state_changed.get_current();
+                let bin_ref = self.pipeline.upcast_ref::<gst::Bin>();
+                bin_ref.debug_to_dot_file(gst::DebugGraphDetails::all(), state_name(current));
+            }
             _ => (),
         }
 
@@ -625,6 +630,17 @@ impl App {
                 y += h;
             }
         }
+    }
+}
+
+fn state_name(s: gst::State) -> &'static str {
+    match s {
+        gst::State::Playing => "PLAYING",
+        gst::State::Null => "NULL",
+        gst::State::VoidPending => "VOID_PENDING",
+        gst::State::Ready => "READY",
+        gst::State::Paused => "PAUSED",
+        _ => "UNKNOWN",
     }
 }
 
