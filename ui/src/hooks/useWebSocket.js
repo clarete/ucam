@@ -11,9 +11,9 @@ export function useWebSocket() {
     // create the websocket object and send store its ref in the state
     const ws = webSocket.current = new WebSocket(address);
     // don't say we can send media for now
-    const capabilities = ['consume:audio', 'consume:video'];
+    const peercaps = ['consume:audio', 'consume:video'];
     ws.addEventListener('open', event => {
-      webSocketSend(state.authJID, { capabilities });
+      webSocketSend(state.authJID, { peercaps });
     });
     ws.addEventListener('close', event => dispatch({ type: actions.WSCK_ON_CLOSE }));
     ws.addEventListener('error', error => dispatch({ type: actions.WSCK_ON_ERROR, error }));

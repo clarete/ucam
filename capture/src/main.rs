@@ -246,11 +246,11 @@ impl App {
         let envelope: protocol::Envelope = serde_json::from_str(msg)?;
 
         match envelope.message {
-            protocol::Message::ClientOnline {
+            protocol::Message::PeerOnline {
                 capabilities: _capabilities,
             } => self.add_peer(&envelope.from_jid, false),
-            protocol::Message::ClientOffline => self.remove_peer(&envelope.from_jid),
-            protocol::Message::CallRequest => {
+            protocol::Message::PeerOffline => self.remove_peer(&envelope.from_jid),
+            protocol::Message::PeerRequestCall => {
                 let peers = self.peers.lock().unwrap();
 
                 if let Some(peer) = peers.get(&envelope.from_jid) {
@@ -1013,9 +1013,9 @@ async fn main() -> Result<(), Error> {
         .await
         .expect("Can't initialize client");
 
-    // Create our application state
+    // Create our application state and lay the pipes for the internal
+    // communication between gstreamer and the websocket connection
     let (app, send_gst_msg_rx, send_ws_msg_rx) = App::new(config.clone())?;
-
     let (sink, stream) = framed.split();
 
     CaptureActor::create(|ctx| {
@@ -1084,7 +1084,7 @@ impl Actor for CaptureActor {
         let msg = protocol::Envelope {
             from_jid: from_jid,
             to_jid: "".to_string(),
-            message: protocol::Message::Capabilities(self.capabilities()),
+            message: protocol::Message::PeerCaps(self.capabilities()),
         };
         let json_text = serde_json::to_string(&msg).unwrap();
         self.framed.write(Message::Text(json_text)).unwrap();

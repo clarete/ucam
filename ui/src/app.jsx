@@ -189,7 +189,7 @@ function ClientCard({ jid }) {
       createOffer();
     };
 
-    webSocketSend(jid, 'callrequest');
+    webSocketSend(jid, 'peerrequestcall');
 
     dispatch({ type: actions.WRTC_PEER_CONNECTION, jid, pc })
 

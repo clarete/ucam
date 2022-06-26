@@ -23,20 +23,25 @@ pub struct Envelope {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Message {
-    /// Notify client that a known JID has come online
-    ClientOnline { capabilities: HashSet<String> },
+    /// Notify peer that a peer in their roster has come online
+    PeerOnline { capabilities: HashSet<String> },
 
-    /// Notify that a known JID has gone offline
-    ClientOffline,
+    /// Notify that a peer in their roster has gone offline
+    PeerOffline,
 
-    /// Send the list of capabilities the client has available to the server
-    Capabilities(HashSet<String>),
+    /// Send capabilities upon connection to the server.  The server
+    /// will keep the capabilities associated with the peer's JID and
+    /// send it over to all peers in its roster
+    PeerCaps(HashSet<String>),
 
-    /// Exchange text messages between local and remote peers
-    Chat(String),
+    /// Request another peer to send you an offer.  Sounds counter
+    /// intuitive, but this message allows the Web UI to request the
+    /// backend to start a WebRTC negotiation by sending an SDP
+    /// message of the type *offer*.
+    PeerRequestCall,
 
-    /// Ask a remote peer to start a call with self
-    CallRequest,
+    /// Exchange text messages between peers
+    PeerChat(String),
 
     /// Exchange SDP messages between peers
     SDP {
@@ -51,7 +56,4 @@ pub enum Message {
         #[serde(rename = "sdpMLineIndex")]
         sdp_mline_index: u32,
     },
-
-    /// Tell the remote peer a video session is going down
-    HangUp,
 }

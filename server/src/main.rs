@@ -13,7 +13,6 @@ use actix_web_actors::ws;
 
 use base64;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
-
 use serde_derive::{Deserialize, Serialize};
 
 use protocol;
@@ -202,7 +201,7 @@ impl Handler<Disconnect> for ChatServer {
         let forward = protocol::Envelope {
             from_jid: msg.jid.clone(),
             to_jid: "".to_string(),
-            message: protocol::Message::ClientOffline,
+            message: protocol::Message::PeerOffline,
         };
         let forward_str = serde_json::to_string(&forward).unwrap();
         self.broadcast(ProtoMessage(forward_str), Some(&msg.jid));
@@ -222,11 +221,13 @@ impl Handler<Capabilities> for ChatServer {
                 let forward = protocol::Envelope {
                     from_jid: msg.jid.clone(),
                     to_jid: "".to_string(),
-                    message: protocol::Message::ClientOnline { capabilities: msg.capabilities },
+                    message: protocol::Message::PeerOnline {
+                        capabilities: msg.capabilities,
+                    },
                 };
                 let forward_str = serde_json::to_string(&forward).unwrap();
                 self.broadcast(ProtoMessage(forward_str), Some(&msg.jid));
-            },
+            }
         }
     }
 }
@@ -321,12 +322,12 @@ impl ChatConnection {
         let deserialized: protocol::Envelope = serde_json::from_str(msg.as_str())?;
 
         match deserialized.message {
-            protocol::Message::Capabilities(capabilities) => {
+            protocol::Message::PeerCaps(capabilities) => {
                 self.server.do_send(Capabilities {
                     jid: deserialized.from_jid,
                     capabilities,
                 });
-            },
+            }
             relay @ _ => {
                 self.server.do_send(RelayMessage {
                     from_jid: deserialized.from_jid,
