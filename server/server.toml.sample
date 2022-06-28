@@ -14,7 +14,7 @@ chat = 'info'
 [userauth]
 # This documents the list of email addresses that can receive links to
 # use the endpoint `/token'.
-allowed_emails = ['admin@domain.tld', 'cam001@studio.loc']
+allowed_jids = ['admin@domain.tld']
 # How much time the authentication tokens are valid for, in hours
 token_validity = 2
 

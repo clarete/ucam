@@ -35,7 +35,7 @@ struct ConfigLogging {
 
 #[derive(Clone, Debug, Deserialize)]
 struct ConfigUserAuth {
-    allowed_emails: Vec<String>,
+    allowed_jids: Vec<String>,
     token_validity: u8,
 }
 
@@ -471,7 +471,7 @@ struct AuthForm {
 /// the only entry point of the web application that doesn't require
 /// authentication because that's the door to the street.
 async fn auth(config: web::Data<Config>, body: web::Json<AuthForm>) -> impl Responder {
-    for email in &config.userauth.allowed_emails {
+    for email in &config.userauth.allowed_jids {
         // Authentication doesn't need full JID
         let jid: Vec<&str> = body.jid.split('/').collect();
         if *email == jid[0] {
@@ -503,7 +503,7 @@ async fn ws(
         Some(Ok(jid)) => {
             let client = ChatConnection::new(jid, server.get_ref().clone());
             ws::start(client, &req, stream)
-        },
+        }
     }
 }
 
