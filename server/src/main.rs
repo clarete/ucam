@@ -6,16 +6,12 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use actix::prelude::*;
-use actix_rt;
-use actix_web;
+
 use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
 
-use base64;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde_derive::{Deserialize, Serialize};
-
-use protocol;
 
 // ---- Constants ----
 
@@ -135,7 +131,7 @@ impl ClientInfo {
     /// the client received during connection time.
     fn new(addr: Recipient<ProtoMessage>) -> Self {
         ClientInfo {
-            addr: addr,
+            addr,
             capabilities: HashSet::<String>::new(),
         }
     }
@@ -276,11 +272,11 @@ struct ChatConnection {
 /// Define the methods needed for a ChatConnection object
 impl ChatConnection {
     fn new(jid: String, server: Addr<ChatServer>) -> Self {
-        return Self {
-            jid: jid,
-            server: server,
+        Self {
+            jid,
+            server,
             heartbeat: Instant::now(),
-        };
+        }
     }
 
     /// Update the heartbeat of the connection to right now
@@ -328,7 +324,7 @@ impl ChatConnection {
                     capabilities,
                 });
             }
-            relay @ _ => {
+            relay => {
                 self.server.do_send(RelayMessage {
                     from_jid: deserialized.from_jid,
                     to_jid: deserialized.to_jid,
@@ -399,7 +395,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
                 // close connection as the client has already disconnected
                 ctx.stop();
             }
-            xxx @ _ => {
+            xxx => {
                 error!("Something unexpected came along: {:?}", xxx);
                 ctx.stop();
             }
@@ -537,10 +533,8 @@ fn decode_token_from_header(authorization: &str) -> Result<String, Error> {
 fn read_jid_from_request(req: &HttpRequest) -> Option<Result<String, Error>> {
     if let Ok(token) = get_auth_token(req) {
         Some(Ok(token))
-    } else if let Some(header) = get_auth_header(req) {
-        Some(decode_token_from_header(header))
     } else {
-        None
+        get_auth_header(req).map(|header| decode_token_from_header(header))
     }
 }
 
