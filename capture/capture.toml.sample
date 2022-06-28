@@ -5,6 +5,9 @@ key = '/path/to/key.pem'
 cert = '/path/to/crt.pem'
 cacert = '/path/to/ca.pem'
 
+[capture]
+video_producer = 'videotestsrc is-live=true'
+
 [logging]
 actix_server = 'info'
 actix_web = 'info'
