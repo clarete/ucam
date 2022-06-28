@@ -1044,6 +1044,7 @@ async fn main() -> Result<(), Error> {
 
 fn check_plugins() -> Result<(), Error> {
     let needed = [
+        "video4linux2",
         "videotestsrc",
         "audiotestsrc",
         "videoconvert",
