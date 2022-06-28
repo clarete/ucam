@@ -377,7 +377,7 @@ impl App {
 
         let peer = Peer(Arc::new(PeerInner {
             peer_id: peer_id.clone(),
-            local_id: "cam001@studio.loc".to_string(),
+            local_id: self.config.http.jid.clone(),
             bin: peer_bin,
             webrtcbin,
             send_msg_tx: self.send_msg_tx.clone(),
