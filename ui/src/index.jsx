@@ -2,7 +2,7 @@ import * as React from "react";
 import * as ReactDOM from "react-dom";
 import CssBaseline from '@material-ui/core/CssBaseline';
 
-import App from './app';
+import App from './components/app';
 import { ContextProvider } from './context';
 
 ReactDOM.render(

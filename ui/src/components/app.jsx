@@ -1,14 +1,10 @@
 import * as React from 'react';
 import { useEffect, useState, useRef } from 'react';
-import { useForm } from 'react-hook-form';
 
 import styled from 'styled-components';
 import Avatar from '@material-ui/core/Avatar';
 import Grid from '@material-ui/core/Grid';
-import Button from '@material-ui/core/Button';
-import TextField from '@material-ui/core/TextField';
 import FormControlLabel from '@material-ui/core/FormControlLabel';
-import LockOutlinedIcon from '@material-ui/icons/LockOutlined';
 import Typography from '@material-ui/core/Typography';
 import Container from '@material-ui/core/Container';
 import Divider from '@material-ui/core/Divider';
@@ -24,35 +20,20 @@ import VideocamIcon from '@material-ui/icons/Videocam';
 import MicIcon from '@material-ui/icons/Mic';
 import StopIcon from '@material-ui/icons/Stop';
 
+import CenterCenterShell from './centercentershell'
+import Loading from './loading';
 import SpinnerIcon from './spinner';
+import AuthForm from './authform';
 
-import { useAppContext } from './hooks/useAppContext';
-import { useAuthState } from './hooks/useAuthState';
-import { useWebSocket } from './hooks/useWebSocket';
+import { useAppContext } from '../hooks/useAppContext';
+import { useAuthState } from '../hooks/useAuthState';
+import { useWebSocket } from '../hooks/useWebSocket';
 
-import { actions } from './context/reducers';
-import { AuthState } from './services/auth';
-import * as serverAPI from './services/api';
+import { actions } from '../context/reducers';
+import { AuthState } from '../services/auth';
+import * as serverAPI from '../services/api';
 
 import adapter from 'webrtc-adapter';
-
-const CenterCenterShell = styled.div`
-  display: grid;
-  height: 100vh;
-  margin: 0;
-  place-items: center center;
-`;
-
-const AvatarShell = styled.div`
-  & .avatar {
-    float: right;
-  }
-`;
-
-const Error = styled.div`
-  padding: 0 0 10px 0;
-  color: #ee2200;
-`;
 
 const IconShell = styled.div`
   width: 24px;
@@ -275,9 +256,9 @@ function ListClientsScreen() {
 
           <Grid item xs={4}>
             <List>
-              {Object.entries(state.roster).map(([jid, caps], i) =>
+              {Object.entries(state.roster).map(([jid, peer], i) =>
                 <div key={`key-client-${jid}`}>
-                  <ClientItem jid={jid} caps={caps.sort()} />
+                  <ClientItem jid={jid} caps={peer.capabilities.sort()} />
                   <Divider component="li" />
                 </div>)}
             </List>
@@ -300,68 +281,6 @@ function ListClientsScreen() {
           </Grid>
         </Grid>
       </Container>
-    </CenterCenterShell>
-  );
-}
-
-function AuthForm() {
-  const { authState, authError, auth } = useAuthState();
-  const { register, handleSubmit, errors } = useForm();
-  const onSubmit = async formData => auth(formData);
-
-  return (
-    <CenterCenterShell>
-      <Container component="main" maxWidth="xs">
-        <AvatarShell>
-          <Avatar className="avatar">
-            <LockOutlinedIcon />
-          </Avatar>
-          <Typography component="h1" variant="h5">
-            Sign in
-          </Typography>
-        </AvatarShell>
-        <form noValidate onSubmit={handleSubmit(onSubmit)}>
-          <TextField
-            variant="outlined"
-            margin="normal"
-            required
-            fullWidth
-            id="jid"
-            label="User ID"
-            name="jid"
-            autoComplete="jid"
-            autoFocus
-            inputRef={register({ required: true })}
-          />
-
-          {errors.jid &&
-           <Error>
-             This field is required.
-           </Error>}
-
-          {authState === AuthState.Failed &&
-           <Error>
-             {authError.httpString}.
-           </Error>}
-
-          <Button
-            type="submit"
-            fullWidth
-            variant="contained"
-            color="primary"
-          >
-            Sign In
-          </Button>
-        </form>
-      </Container>
-    </CenterCenterShell>
-  );
-}
-
-function Loading() {
-  return (
-    <CenterCenterShell>
-      <SpinnerIcon />
     </CenterCenterShell>
   );
 }
