@@ -13,7 +13,7 @@ export function useWebSocket() {
     // don't say we can send media for now
     const peercaps = ['consume:audio', 'consume:video'];
     ws.addEventListener('open', event => {
-      webSocketSend(state.authJID, { peercaps });
+      webSocketSend({ peercaps }, state.authJID);
     });
     ws.addEventListener('close', event => dispatch({ type: actions.WSCK_ON_CLOSE }));
     ws.addEventListener('error', error => dispatch({ type: actions.WSCK_ON_ERROR, error }));
@@ -67,7 +67,7 @@ function makeMessageHandler(state, dispatch, webSocketSend) {
               wsPeer.setLocalDescription(sdp);
               return sdp;
             })
-            .then(sdp => webSocketSend(fromJID, { sdp }));
+            .then(sdp => webSocketSend({ sdp }, fromJID));
           return;
 
         case "answer":

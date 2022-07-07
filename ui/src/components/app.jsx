@@ -141,7 +141,7 @@ function ClientCard({ jid }) {
       console.dir(event);
 
       if (event.candidate !== null) {
-        webSocketSend(jid, { ice: event.candidate });
+        webSocketSend({ ice: event.candidate }, jid);
       }
     };
 
@@ -160,7 +160,7 @@ function ClientCard({ jid }) {
         iceRestart: false, //true,
       })
         .then(sdp => pc.setLocalDescription(sdp))
-        .then(() => webSocketSend(jid, { sdp: pc.localDescription }))
+        .then(() => webSocketSend({ sdp: pc.localDescription }, jid))
         .catch(error => console.error('Send offer failed: ', error));
     };
 
@@ -170,7 +170,7 @@ function ClientCard({ jid }) {
       createOffer();
     };
 
-    webSocketSend(jid, 'peerrequestcall');
+    webSocketSend('peerrequestcall', jid);
 
     dispatch({ type: actions.WRTC_PEER_CONNECTION, jid, pc })
 

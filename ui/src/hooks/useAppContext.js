@@ -1,6 +1,6 @@
 import { useContext } from 'react';
 import { appContext, PeerState } from '../context';
-import { actions } from '../context/reducers';
+import { actions, wsSend } from '../context/reducers';
 
 /// Pulls most useful fields of the application context.  Notice: this
 /// is mostly intended to be used by *other hooks* instead of letting
@@ -28,19 +28,7 @@ export function useAppContext() {
     dispatch({ type: actions.WRTC_PEER_STATE, jid, state: undefined });
   };
 
-  const webSocketSend = (toJID, message) => {
-    if (state.ws.current === null) {
-      console.error(`this is messed up: trying to send message without a reference to a websocket instance`);
-      return;
-    }
-    console.log(`Send message to=${toJID} msg=${JSON.stringify(message)}`);
-
-    state.ws.current.send(JSON.stringify({
-      from_jid: state.authJID,
-      to_jid: toJID || "",
-      message,
-    }));
-  }
+  const webSocketSend = (message, toJID) => wsSend(state, message, toJID);
 
   return {
     // state utilities
