@@ -95,13 +95,26 @@ struct Disconnect {
     jid: String,
 }
 
+#[derive(Message, Serialize)]
+#[rtype(result = "()")]
+struct Peer {
+    online: bool,
+    capabilities: HashSet<String>,
+}
+
+impl Peer {
+    fn new(online: bool, capabilities: HashSet<String>) -> Self {
+        Self { online, capabilities }
+    }
+}
+
 /// List clients connected to the server excluding sender's own JID
-struct ListClients {
+struct ListPeers {
     jid: String,
 }
 
-impl Message for ListClients {
-    type Result = HashMap<String, HashSet<String>>;
+impl Message for ListPeers {
+    type Result = HashMap<String, Peer>;
 }
 
 /// Relay message to another user
@@ -228,18 +241,21 @@ impl Handler<Capabilities> for ChatServer {
     }
 }
 
-impl Handler<ListClients> for ChatServer {
-    type Result = MessageResult<ListClients>;
+impl Handler<ListPeers> for ChatServer {
+    type Result = MessageResult<ListPeers>;
 
     /// Return a list with the JIDs of all currently connected clients
-    fn handle(&mut self, msg: ListClients, _ctx: &mut Self::Context) -> Self::Result {
-        let mut output: HashMap<String, HashSet<String>> = HashMap::new();
+    fn handle(&mut self, msg: ListPeers, _ctx: &mut Self::Context) -> Self::Result {
+        let mut output: HashMap<String, Peer> = HashMap::new();
         for (key, client_info) in &self.clients {
             // we don't report the JID of whoever asked for this list
             if *key == msg.jid {
                 continue;
             }
-            output.insert(key.clone(), client_info.capabilities.clone());
+
+            let peer = Peer::new(true, client_info.capabilities.clone());
+
+            output.insert(key.clone(), peer);
         }
         MessageResult(output)
     }
@@ -406,7 +422,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
 // ---- HTTP API ----
 
 /// List currently connected clients
-async fn http_api_clients(
+async fn http_api_peers(
     req: HttpRequest,
     server: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, actix_web::Error> {
@@ -414,8 +430,8 @@ async fn http_api_clients(
         None => Ok(HttpResponse::Unauthorized().finish()),
         Some(Err(_e)) => Ok(HttpResponse::BadRequest().finish()),
         Some(Ok(jid)) => {
-            let clients = server.send(ListClients { jid }).await?;
-            Ok(HttpResponse::Ok().json(clients))
+            let peers = server.send(ListPeers { jid }).await?;
+            Ok(HttpResponse::Ok().json(peers))
         }
     }
 }
@@ -608,7 +624,7 @@ async fn main() -> Result<(), io::Error> {
             .data(server_actor.clone())
             .route("/ws", web::get().to(ws))
             .route("/auth", web::post().to(auth))
-            .route("/roster", web::get().to(http_api_clients))
+            .route("/peers", web::get().to(http_api_peers))
     };
     HttpServer::new(app)
         .bind_openssl(bind_addr, builder)?
