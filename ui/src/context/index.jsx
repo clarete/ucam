@@ -24,7 +24,7 @@ const initialState = {
   /// the JID of the local user
   authJID: null,
   /// map from JID's to array of strings with client capabilities
-  roster: {},
+  peers: {},
   /// field that will hold the WebSocket instance
   ws: createRef(),
   /// map of JID's to RTCPeerConnection instances

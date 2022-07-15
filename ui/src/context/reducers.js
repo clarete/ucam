@@ -1,24 +1,5 @@
 import { AuthState } from '../services/auth';
-
-export const actions = {
-  AUTH_LOADING: "AUTH_LOADING",
-  AUTH_SUCCESS: "AUTH_SUCCESS",
-  AUTH_FAILURE: "AUTH_FAILURE",
-
-  ROSTER_LIST:    "ROSTER_LIST",
-  ROSTER_ONLINE:  "ROSTER_ONLINE",
-  ROSTER_OFFLINE: "ROSTER_OFFLINE",
-
-  WSCK_CONNECT:    "WSCK_CONNECT",
-  WSCK_SEND:       "WSCK_SEND",
-  WSCK_ON_OPEN:    "WSCK_ON_OPEN",
-  WSCK_ON_CLOSE:   "WSCK_ON_CLOSE",
-  WSCK_ON_ERROR:   "WSCK_ON_ERROR",
-  WSCK_ON_MESSAGE: "WSCK_ON_MESSAGE",
-
-  WRTC_PEER_STATE:      "WRTC_PEER_STATE",
-  WRTC_PEER_CONNECTION: "WRTC_PEER_CONNECTION",
-};
+import * as actions from './actions';
 
 export function createReducer() {
   return (state, action) => {
@@ -35,18 +16,18 @@ export function createReducer() {
     case actions.AUTH_FAILURE:
       return { ...state, ...data  };
 
-    case actions.ROSTER_LIST:
+    case actions.PEER_LIST:
       return { ...state, ...data };
-    case actions.ROSTER_ONLINE: {
+    case actions.PEER_ONLINE: {
       const newState = { ...state };
       const { capabilities } = data.message.clientonline;
-      newState.roster[data.from_jid] = capabilities;
+      newState.peers[data.from_jid] = capabilities;
       return newState;
     }
-    case actions.ROSTER_OFFLINE: {
+    case actions.PEER_OFFLINE: {
       const newState = { ...state };
-      if (newState.roster[data.from_jid] !== undefined)
-        delete newState.roster[data.from_jid];
+      if (newState.peers[data.from_jid] !== undefined)
+        delete newState.peers[data.from_jid];
       return newState;
     }
 

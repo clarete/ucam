@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useEffect, useState, useRef } from 'react';
+import { useContext, useEffect, useState, useRef } from 'react';
 
 import styled from 'styled-components';
 import Avatar from '@material-ui/core/Avatar';
@@ -25,13 +25,14 @@ import Loading from './loading';
 import SpinnerIcon from './spinner';
 import AuthForm from './authform';
 
-import { useAppContext } from '../hooks/useAppContext';
 import { useAuthState } from '../hooks/useAuthState';
+import { useStateSelectors } from '../hooks/useStateSelectors';
 import { useWebSocket } from '../hooks/useWebSocket';
 
-import { actions } from '../context/reducers';
+import * as api from '../services/api';
+import * as messages from '../context/messages';
+import { appContext } from '../context';
 import { AuthState } from '../services/auth';
-import * as serverAPI from '../services/api';
 
 import adapter from 'webrtc-adapter';
 
@@ -54,16 +55,14 @@ const IconShell = styled.div`
 const iconStyle = { width: 16, height: 16 };
 
 function ClientItem({ jid, caps }) {
-  const {
-    state,
-    isClientConnected,
-    connectToClient,
-    disconnectFromClient,
-  } = useAppContext();
-  const isConnectedTo = isClientConnected(jid);
+  const { dispatch, state } = useContext(appContext);
+  const { wsIsConnected } = useStateSelectors();
+
+  const isConnectedTo = wsIsConnected(jid);
+
   const handleItemClick = () => isConnectedTo
-    ? disconnectFromClient(jid)
-    : connectToClient(jid);
+    ? dispatch(messages.disconnect(jid))
+    : dispatch(messages.connect(jid));
 
   return (
     <ListItem button component="li" onClick={handleItemClick}>
@@ -107,7 +106,7 @@ const ClientCardShell = styled.div`
 `;
 
 function ClientCard({ jid }) {
-  const { dispatch, state, webSocketSend } = useAppContext();
+  const { dispatch, state } = useContext(appContext);
   const [loading, setLoading] = useState(false);
   const videoEl = useRef(null);
 
@@ -141,7 +140,7 @@ function ClientCard({ jid }) {
       console.dir(event);
 
       if (event.candidate !== null) {
-        webSocketSend({ ice: event.candidate }, jid);
+        dispatch(messages.wsSend({ ice: event.candidate }, jid));
       }
     };
 
@@ -160,7 +159,7 @@ function ClientCard({ jid }) {
         iceRestart: false, //true,
       })
         .then(sdp => pc.setLocalDescription(sdp))
-        .then(() => webSocketSend({ sdp: pc.localDescription }, jid))
+        .then(() => dispatch(messages.wsSend({ sdp: pc.localDescription }, jid)))
         .catch(error => console.error('Send offer failed: ', error));
     };
 
@@ -170,9 +169,9 @@ function ClientCard({ jid }) {
       createOffer();
     };
 
-    webSocketSend('peerrequestcall', jid);
+    dispatch(messages.wsSend('peerrequestcall', jid));
 
-    dispatch({ type: actions.WRTC_PEER_CONNECTION, jid, pc })
+    dispatch(messages.wrtcConnection(jid, pc))
 
   }, []);
 
@@ -227,15 +226,29 @@ const ListClientScreenShell = styled.div`
 
 function ListClientsScreen() {
   const [loading, setLoading] = useState(true);
-  const { state, dispatch, getConnectedClients } = useAppContext();
-  const connectedClients = getConnectedClients();
+  const { dispatch, state } = useContext(appContext);
+  const { wsConnectedPeers } = useStateSelectors();
+
+  // all peers visible by the signaling layer
+  const peers = Object.entries(state.peers);
+
+  // if the signaling layer sees any peers
+  const hasConnectedPeers = peers.length > 0;
+
+  // all peers connected via websocket
+  const wsPeers = wsConnectedPeers();
+
+  // if we have any websocket peers connected
+  const hasWsPeers = wsPeers.length > 0;
 
   useWebSocket();
+
   useEffect(() => {
-    serverAPI
-      .getRoster(state.authToken)
-      .then(roster => {
-        dispatch({ type: actions.ROSTER_LIST, roster });
+    api
+      .peers(state.authToken)
+      .then(peers => {
+        console.dir(peers);
+        dispatch(messages.peersList(peers));
         setLoading(false);
       });
   }, []);
@@ -243,7 +256,7 @@ function ListClientsScreen() {
   if (loading)
     return <Loading />;
 
-  if (Object.entries(state.roster).length === 0)
+  if (!hasConnectedPeers)
     return <NobodyToTalkMessage />;
 
   return (
@@ -256,7 +269,7 @@ function ListClientsScreen() {
 
           <Grid item xs={4}>
             <List>
-              {Object.entries(state.roster).map(([jid, peer], i) =>
+              {peers.map(([jid, peer], i) =>
                 <div key={`key-client-${jid}`}>
                   <ClientItem jid={jid} caps={peer.capabilities.sort()} />
                   <Divider component="li" />
@@ -266,12 +279,12 @@ function ListClientsScreen() {
 
           <Grid item xs={8}>
             <ListClientScreenShell>
-              {connectedClients.length === 0 &&
+              {!hasWsPeers &&
                <NoClientConnectedMessage />}
 
-              {connectedClients.length > 0 &&
+              {hasWsPeers &&
                <Grid container justify="center" spacing={2}>
-                 {connectedClients.map(jid =>
+                 {wsPeers.map(jid =>
                    <Grid item key={`connected-client-${jid}`}>
                      <ClientCard jid={jid} />
                    </Grid>)}

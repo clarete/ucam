@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
-import { useAppContext } from './useAppContext';
-import { actions } from '../context/reducers';
+import { useContext, useEffect, useRef } from 'react';
+import { appContext } from './../context';
+import * as actions from '../context/actions';
+import * as messages from '../context/messages';
 
 export function useWebSocket() {
-  const { state, dispatch, webSocketSend } = useAppContext();
+  const { state, dispatch } = useContext(appContext);
   const address = webSocketUrl(state);
   const webSocket = useRef(null);
 
@@ -13,11 +14,11 @@ export function useWebSocket() {
     // don't say we can send media for now
     const peercaps = ['consume:audio', 'consume:video'];
     ws.addEventListener('open', event => {
-      webSocketSend({ peercaps }, state.authJID);
+      dispatch(messages.wsSend({ peercaps }, state.authJID));
     });
     ws.addEventListener('close', event => dispatch({ type: actions.WSCK_ON_CLOSE }));
     ws.addEventListener('error', error => dispatch({ type: actions.WSCK_ON_ERROR, error }));
-    ws.addEventListener('message', makeMessageHandler(state, dispatch, webSocketSend));
+    ws.addEventListener('message', makeMessageHandler(state, dispatch));
 
     // store this instance in the context to allow us to send messages
     // from other components too
@@ -28,19 +29,19 @@ export function useWebSocket() {
   }, []);
 }
 
-function makeMessageHandler(state, dispatch, webSocketSend) {
+function makeMessageHandler(state, dispatch) {
   return (event) => {
     if (event.type === "message") {
       const data = JSON.parse(event.data);
       const { from_jid: fromJID, message } = data;
 
       if (message.clientonline !== undefined) {
-        dispatch({ type: actions.ROSTER_ONLINE, ...data });
+        dispatch({ type: actions.PEER_ONLINE, ...data });
         return;
       }
 
       if (message === 'clientoffline') {
-        dispatch({ type: actions.ROSTER_OFFLINE, ...data });
+        dispatch({ type: actions.PEER_OFFLINE, ...data });
         return;
       }
 
@@ -67,7 +68,7 @@ function makeMessageHandler(state, dispatch, webSocketSend) {
               wsPeer.setLocalDescription(sdp);
               return sdp;
             })
-            .then(sdp => webSocketSend({ sdp }, fromJID));
+            .then(sdp => dispatch(messages.wsSend({ sdp }, fromJID)));
           return;
 
         case "answer":

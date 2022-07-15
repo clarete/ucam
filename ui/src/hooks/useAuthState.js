@@ -1,10 +1,11 @@
-import { useAppContext } from './useAppContext'
-import { actions } from '../context/reducers';
+import { useContext } from 'react';
 import { AuthState, login } from '../services/auth';
+import { appContext } from '../context';
+import * as actions from '../context/actions';
 
 /// Expose authState and the authentication API to components.
 export function useAuthState() {
-  const { state: { authState, authError }, dispatch } = useAppContext();
+  const { state: { authState, authError }, dispatch } = useContext(appContext);
 
   const auth = async (authFormData) => {
     dispatch({ type: actions.AUTH_LOADING });
