@@ -2,7 +2,7 @@
 name = "capture"
 version = "0.1.0"
 authors = ["Lincoln de Sousa <lincoln@clarete.li>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 protocol = { path = "../protocol" }
@@ -22,11 +22,11 @@ env_logger = "*"
 log = "*"
 toml = "0.5"
 
-actix = "0.10.0-alpha.2"
-actix-codec = "0.2.0"
-actix-rt = "1.0"
-awc = { version = "1.0.1", features = ["openssl"] }
+actix = "0.13.0"
+actix-codec = "0.5.0"
+actix-rt = "2.7.0"
+awc = { version = "3.0.0", features = ["openssl"] }
 openssl = "0.10"
 
-futures = "0.3"
-bytes = "0.5.3"
+futures = "0.3.21"
+bytes = "1.1.0"

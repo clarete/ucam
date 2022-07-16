@@ -53,8 +53,6 @@ macro_rules! upgrade_weak {
 struct ConfigHTTP {
     server: String,
     jid: String,
-    key: String,
-    cert: String,
     cacert: String,
 }
 
@@ -64,17 +62,9 @@ struct ConfigCapture {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct ConfigLogging {
-    actix_server: String,
-    actix_web: String,
-    capture: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
 struct Config {
     http: ConfigHTTP,
     capture: ConfigCapture,
-    logging: Option<ConfigLogging>,
 }
 
 // Strong reference to our application state
@@ -967,18 +957,19 @@ impl Drop for PeerInner {
 /// Create the HTTP client and connect it to the websocket server.
 /// Then return the framed response
 async fn get_ws_client(config: &Config) -> Result<Framed<BoxedSocket, Codec>, Error> {
-    let mut ssl_builder = SslConnector::builder(SslMethod::tls())?;
-    ssl_builder.set_ca_file(&config.http.cacert)?;
+    let mut ssl = SslConnector::builder(SslMethod::tls())?;
+    ssl.set_ca_file(&config.http.cacert)?;
+
     let token = base64::encode(&config.http.jid);
     let connector = Connector::new()
         .timeout(Duration::from_secs(15))
-        .ssl(ssl_builder.build())
-        .finish();
-    let (_, framed) = Client::build()
+        .openssl(ssl.build());
+    let client = Client::builder()
         .connector(connector)
         .finish()
         .ws(&config.http.server)
-        .bearer_auth(&token)
+        .bearer_auth(&token);
+    let (_, framed) = client
         .connect()
         .await
         .map_err(|e| Error::new_io(format!("Fudeu criando o cliente: {}", e)))?;
@@ -1027,9 +1018,10 @@ async fn main() -> Result<(), Error> {
     let (sink, stream) = framed.split();
 
     CaptureActor::create(|ctx| {
-        CaptureActor::add_stream(stream, ctx);
-        CaptureActor::add_stream(send_ws_msg_rx, ctx);
-        CaptureActor::add_stream(send_gst_msg_rx, ctx);
+        ctx.add_stream(stream);
+        ctx.add_stream(send_ws_msg_rx);
+        ctx.add_stream(send_gst_msg_rx);
+
         CaptureActor {
             config: config,
             gstapp: app,
@@ -1096,7 +1088,7 @@ impl Actor for CaptureActor {
             message: protocol::Message::PeerCaps(self.capabilities()),
         };
         let json_text = serde_json::to_string(&msg).unwrap();
-        self.framed.write(Message::Text(json_text)).unwrap();
+        self.framed.write(Message::Text(json_text.into())).unwrap();
         self.hb(ctx)
     }
 
@@ -1146,8 +1138,8 @@ impl StreamHandler<gst::Message> for CaptureActor {
 impl StreamHandler<protocol::Envelope> for CaptureActor {
     fn handle(&mut self, msg: protocol::Envelope, _ctx: &mut Context<Self>) {
         let json_text = serde_json::to_string(&msg).unwrap();
-        debug!("Message sent: {}", &json_text);
-        self.framed.write(Message::Text(json_text)).unwrap();
+        debug!("Message sent: {:?}", &json_text);
+        self.framed.write(Message::Text(json_text.into())).unwrap();
     }
 
     fn finished(&mut self, _ctx: &mut Self::Context) {
