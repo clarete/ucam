@@ -311,8 +311,8 @@ impl ChatConnection {
         });
     }
 
-    fn _handle_message(&self, msg: &String) -> Result<(), serde_json::Error> {
-        let deserialized: protocol::Envelope = serde_json::from_str(msg.as_str())?;
+    fn _handle_message(&self, msg: &str) -> Result<(), serde_json::Error> {
+        let deserialized: protocol::Envelope = serde_json::from_str(msg)?;
 
         match deserialized.message {
             protocol::Message::PeerCaps(capabilities) => {
@@ -517,7 +517,7 @@ fn get_auth_token(req: &HttpRequest) -> Result<String, serde_qs::Error> {
 }
 
 /// Retrieve the `Authorization' header from the request's headers
-fn get_auth_header<'a>(req: &'a HttpRequest) -> Option<&'a str> {
+fn get_auth_header(req: &HttpRequest) -> Option<&str> {
     req.headers().get("Authorization")?.to_str().ok()
 }
 
@@ -536,7 +536,7 @@ fn read_jid_from_request(req: &HttpRequest) -> Option<Result<String, Error>> {
     if let Ok(token) = get_auth_token(req) {
         Some(Ok(token))
     } else {
-        get_auth_header(req).map(|header| decode_token_from_header(header))
+        get_auth_header(req).map(decode_token_from_header)
     }
 }
 
