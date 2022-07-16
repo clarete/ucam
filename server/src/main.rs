@@ -23,21 +23,8 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 // ---- Define the shape of the configuration object ----
 
 #[derive(Clone, Debug, Deserialize)]
-struct ConfigLogging {
-    actix_server: String,
-    actix_web: String,
-    chat: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
 struct ConfigUserAuth {
     allowed_jids: Vec<String>,
-    token_validity: u8,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct ConfigLocation {
-    devices: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -52,9 +39,7 @@ struct ConfigHTTP {
 #[derive(Clone, Debug, Deserialize)]
 struct Config {
     http: ConfigHTTP,
-    logging: Option<ConfigLogging>,
     userauth: ConfigUserAuth,
-    locations: HashMap<String, ConfigLocation>,
 }
 
 // ---- Protocol messages for chat client-server communication ----
@@ -172,11 +157,7 @@ impl ChatServer {
                     continue;
                 }
             }
-
-            match client.addr.do_send(msg.clone()) {
-                Ok(_) => debug!("Broadcast to client {}: {}", key, msg.clone()),
-                Err(e) => error!("Couldn't message client {}: {}", key, e),
-            }
+            client.addr.do_send(msg.clone());
         }
     }
 }
@@ -269,7 +250,7 @@ impl Handler<RelayMessage> for ChatServer {
         let message = serde_json::to_string(&msg).unwrap();
         match self.clients.get(&msg.to_jid) {
             None => error!("Client `{}' not connected", msg.to_jid),
-            Some(client) => client.addr.do_send(ProtoMessage(message)).unwrap(),
+            Some(client) => client.addr.do_send(ProtoMessage(message)),
         }
     }
 }
@@ -405,7 +386,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatConnection {
                 self.heartbeat_update();
             }
             Ok(ws::Message::Text(text)) => {
-                self.handle_message(text);
+                self.handle_message(text.to_string());
             }
             Ok(ws::Message::Close(_)) => {
                 // close connection as the client has already disconnected
@@ -430,8 +411,13 @@ async fn http_api_peers(
         None => Ok(HttpResponse::Unauthorized().finish()),
         Some(Err(_e)) => Ok(HttpResponse::BadRequest().finish()),
         Some(Ok(jid)) => {
-            let peers = server.send(ListPeers { jid }).await?;
-            Ok(HttpResponse::Ok().json(peers))
+            match server.send(ListPeers { jid }).await {
+                Ok(peers) => Ok(HttpResponse::Ok().json(peers)),
+                Err(err) => {
+                    error!("{:?}", err);
+                    Ok(HttpResponse::InternalServerError().finish())
+                },
+            }
         }
     }
 }
@@ -620,8 +606,8 @@ async fn main() -> Result<(), io::Error> {
     let app = move || {
         App::new()
             .wrap(middleware::Logger::default())
-            .data(config.clone())
-            .data(server_actor.clone())
+            .app_data(web::Data::new(config.clone()))
+            .app_data(web::Data::new(server_actor.clone()))
             .route("/ws", web::get().to(ws))
             .route("/auth", web::post().to(auth))
             .route("/peers", web::get().to(http_api_peers))

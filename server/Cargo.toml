@@ -2,17 +2,17 @@
 name = "server"
 version = "0.1.0"
 authors = ["Lincoln de Sousa <lincoln@clarete.li>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 protocol = { path = "../protocol" }
 base64 = "*"
 env_logger = "*"
 log = "*"
-actix = "0.9"
-actix-rt = "1.0"
-actix-web = { version = "2.0", features = ["openssl"] }
-actix-web-actors = "2.0"
+actix = "0.13"
+actix-rt = "2.7.0"
+actix-web = { version = "4.1", features = ["openssl"] }
+actix-web-actors = "4.1"
 openssl = "0.10"
 toml = "0.5"
 serde = "1.0"
