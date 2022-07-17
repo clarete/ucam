@@ -36,10 +36,7 @@ impl Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Error[")?;
-        write!(f, "{:?}", self.t)?;
-        write!(f, "]")?;
-        write!(f, "{}", self.message)
+        write!(f, "{:?} Error: {}", self.t, self.message)
     }
 }
 
