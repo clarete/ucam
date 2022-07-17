@@ -1,4 +1,3 @@
-use base64;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -23,8 +22,6 @@ use awc::{
     ws::{Codec, Frame, Message},
     BoxedSocket, Client, Connector,
 };
-
-use protocol;
 
 mod err;
 
@@ -284,7 +281,7 @@ impl App {
                     .ok_or_else(move || Error::new_proto(format!("Can't find peer: {}", jid)))?;
                 peer.handle_ice(sdp_mline_index, &candidate)
             }
-            msg @ _ => Err(Error::new_proto(format!("Unknown message: {:?}", msg))),
+            msg => Err(Error::new_proto(format!("Unknown message: {:?}", msg))),
         }
     }
 
@@ -604,8 +601,8 @@ impl App {
             (1, 1)
         } else if npads <= 4 {
             (2, 2)
-        } else if npads <= 16 {
-            (4, 4)
+        // } else if npads <= 16 {
+        //     (4, 4)
         } else {
             // FIXME: we don't support more than 16 streams for now
             (4, 4)
@@ -1014,7 +1011,7 @@ async fn main() -> Result<(), Error> {
 
     // Create our application state and lay the pipes for the internal
     // communication between gstreamer and the websocket connection
-    let (app, send_gst_msg_rx, send_ws_msg_rx) = App::new(config.clone())?;
+    let (gstapp, send_gst_msg_rx, send_ws_msg_rx) = App::new(config.clone())?;
     let (sink, stream) = framed.split();
 
     CaptureActor::create(|ctx| {
@@ -1023,13 +1020,13 @@ async fn main() -> Result<(), Error> {
         ctx.add_stream(send_gst_msg_rx);
 
         CaptureActor {
-            config: config,
-            gstapp: app,
+            config,
+            gstapp,
             framed: SinkWrite::new(sink, ctx),
         }
     });
 
-    let _ = actix_rt::signal::ctrl_c().await?;
+    actix_rt::signal::ctrl_c().await?;
 
     Ok(())
 }
@@ -1083,7 +1080,7 @@ impl Actor for CaptureActor {
     fn started(&mut self, ctx: &mut Context<Self>) {
         let from_jid = self.config.http.jid.clone();
         let msg = protocol::Envelope {
-            from_jid: from_jid,
+            from_jid,
             to_jid: "".to_string(),
             message: protocol::Message::PeerCaps(self.capabilities()),
         };
@@ -1105,7 +1102,7 @@ impl CaptureActor {
         caps.insert("produce:video".to_string());
         caps.insert("produce:audio".to_string());
         caps.insert("consume:audio".to_string());
-        return caps;
+        caps
     }
 
     fn hb(&self, ctx: &mut Context<Self>) {
@@ -1167,7 +1164,7 @@ impl StreamHandler<Result<Frame, WsProtocolError>> for CaptureActor {
             Err(e) => {
                 error!("Error handling websocket message: {:?}", e);
             }
-            m @ _ => {
+            m => {
                 error!("Unhandled websocket message: {:?}", m);
             }
         }

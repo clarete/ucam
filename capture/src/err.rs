@@ -1,11 +1,8 @@
-use gst;
-use toml;
-
 #[derive(Debug)]
 pub(crate) enum ErrorType {
     IO,
     Input,
-    GST,
+    Gst,
     Protocol,
 }
 
@@ -29,7 +26,7 @@ impl Error {
     }
 
     pub(crate) fn new_gst(message: String) -> Self {
-        Error::new(ErrorType::GST, message)
+        Error::new(ErrorType::Gst, message)
     }
 
     pub(crate) fn new_proto(message: String) -> Self {
@@ -40,6 +37,7 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "Error[")?;
+        write!(f, "{:?}", self.t)?;
         write!(f, "]")?;
         write!(f, "{}", self.message)
     }
