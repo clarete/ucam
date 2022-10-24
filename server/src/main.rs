@@ -13,34 +13,19 @@ use actix_web_actors::ws;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde_derive::{Deserialize, Serialize};
 
+mod auth;
+mod model;
+mod err;
+
+use model::Config;
+use err::{Error, ChatError};
+
 // ---- Constants ----
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-
-// ---- Define the shape of the configuration object ----
-
-#[derive(Clone, Debug, Deserialize)]
-struct ConfigUserAuth {
-    allowed_jids: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct ConfigHTTP {
-    host: String,
-    port: u16,
-    key: String,
-    cert: String,
-    cacert: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct Config {
-    http: ConfigHTTP,
-    userauth: ConfigUserAuth,
-}
 
 // ---- Protocol messages for chat client-server communication ----
 
@@ -140,12 +125,14 @@ impl ClientInfo {
 #[derive(Clone)]
 struct ChatServer {
     clients: HashMap<String, ClientInfo>,
+    config: Config,
 }
 
 impl ChatServer {
-    fn new() -> Self {
+    fn new(config: Config) -> Self {
         debug!("New ProtocolServer created");
         Self {
+            config,
             clients: HashMap::new(),
         }
     }
@@ -239,6 +226,19 @@ impl Handler<ListPeers> for ChatServer {
             output.insert(key.clone(), peer);
         }
         MessageResult(output)
+    }
+}
+
+impl Handler<AuthPeer> for ChatServer {
+    type Result = MessageResult<AuthPeer>;
+
+    /// Read authentication from AuthPeer, and if it is a valid
+    /// credential, responds with a token
+    fn handle(&mut self, msg: AuthPeer, _ctx: &mut Self::Context) -> Self::Result {
+        MessageResult(match auth::create_token(&self.config, &msg.jid) {
+            Ok(token) => Ok(Some(token)),
+            Err(err) => Err(err),
+        })
     }
 }
 
@@ -422,39 +422,23 @@ async fn http_api_peers(
     }
 }
 
-// ---- HTTP Server Handling ----
-
-#[derive(Debug)]
-struct Error {}
-
-impl Error {
-    fn new() -> Self {
-        Self {}
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Error")
-    }
-}
-
-impl From<base64::DecodeError> for Error {
-    fn from(_err: base64::DecodeError) -> Self {
-        Error::new()
-    }
-}
-
-impl From<std::str::Utf8Error> for Error {
-    fn from(_err: std::str::Utf8Error) -> Self {
-        Error::new()
-    }
-}
-
-/// Represents the data that arrives from the authentication form.
+/// Represents the data that arrives from the authentication form, and
+/// that's shipped to the server actor to authenticate a peer
 #[derive(Debug, Deserialize)]
-struct AuthForm {
+struct AuthPeer {
     jid: String,
+    password: String,
+}
+
+impl Message for AuthPeer {
+    type Result = Result<Option<String>, Error>;
+}
+
+
+/// Shape of the data returned by the authentication endpoint
+#[derive(Debug, Serialize)]
+struct AuthResponse {
+    token: String,
 }
 
 /// Authenticate the user.  It takes the user from the request body
@@ -468,17 +452,23 @@ struct AuthForm {
 /// This method *DOES NOT* require authentication.  This is in fact,
 /// the only entry point of the web application that doesn't require
 /// authentication because that's the door to the street.
-async fn auth(config: web::Data<Config>, body: web::Json<AuthForm>) -> impl Responder {
-    for email in &config.userauth.allowed_jids {
-        // Authentication doesn't need full JID
-        let jid: Vec<&str> = body.jid.split('/').collect();
-        if *email == jid[0] {
-            // TODO: Generate token for user
-            // TODO: Send token via email
-            return HttpResponse::Ok().finish();
-        }
+async fn auth(
+    server: web::Data<Addr<ChatServer>>,
+    form: web::Json<AuthPeer>,
+) -> Result<impl Responder, Error> {
+    // Authentication doesn't need full JID
+    let jid = form.jid.split('/').collect::<Vec<&str>>();
+    if jid.len() < 1 {
+        return Ok(HttpResponse::BadRequest().finish());
     }
-    HttpResponse::Unauthorized().finish()
+    // Forward the message to the chat server
+    Ok(match server.send(AuthPeer {
+        jid: jid[0].to_string(),
+        password: form.password.to_string(),
+    }).await?? {
+        None => HttpResponse::Unauthorized().finish(),
+        Some(token) => HttpResponse::Ok().json(AuthResponse { token }),
+    })
 }
 
 /// This endpoint starts the WebSocket connection for a new client.
@@ -540,35 +530,6 @@ fn read_jid_from_request(req: &HttpRequest) -> Option<Result<String, Error>> {
     }
 }
 
-/// Applicatio error types.
-#[derive(Debug)]
-enum ChatError {
-    IO(io::Error),
-    Config(toml::de::Error),
-    // Web(actix_web::Error),
-}
-
-impl From<io::Error> for ChatError {
-    fn from(error: io::Error) -> Self {
-        ChatError::IO(error)
-    }
-}
-
-impl From<toml::de::Error> for ChatError {
-    fn from(error: toml::de::Error) -> Self {
-        ChatError::Config(error)
-    }
-}
-
-impl From<ChatError> for io::Error {
-    fn from(error: ChatError) -> Self {
-        match error {
-            ChatError::IO(e) => e,
-            _ => io::Error::from(error),
-        }
-    }
-}
-
 fn load_config(args: &Vec<String>) -> Result<Config, ChatError> {
     if args.len() != 2 {
         // Can't move on without the configuration file
@@ -600,7 +561,7 @@ async fn main() -> Result<(), io::Error> {
     builder.set_ca_file(&config.http.cacert)?;
 
     // Address for the server actor
-    let server_actor = ChatServer::new().start();
+    let server_actor = ChatServer::new(config.clone()).start();
 
     // Spin it all up
     let app = move || {
