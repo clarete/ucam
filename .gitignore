@@ -6,7 +6,10 @@ target/
 node_modules/
 
 # application
-certs/
+server/certs/*.pem
+server/certs/*.crt
+server/certs/*.csr
+server/certs/*.key
 server/server.toml
 capture/capture.toml
 storage/storage.toml
