@@ -185,3 +185,28 @@
          rtpjpegdepay ! decodebin ! videoconvert ! autovideosink
      #+end_src
 
+*** Pipeline #3:
+**** Raspberry Pi (client.sh)
+     #+begin_src sh
+     PORT=9901
+     HOST=127.0.0.1
+     LOCATION=rtsp://${HOST}:${PORT}/test
+
+     gst-launch-1.0 \
+        --gst-debug-level=4 \
+        videotestsrc ! x264enc ! video/x-h264 ! \
+        rtspclientsink location=$LOCATION
+     #+end_src
+
+**** RTSP Server (media factory)
+     #+begin_src sh
+     # Attempt #1
+     # ----------
+     # This works but just plays the incoming stream with whatever
+     # the element `autovideosink' pics.
+
+     (decodebin name=depay0 ! videoconvert ! autovideosink)
+
+     # Attempt #2
+     (decodebin name=depay0 ! rtph264depay ! h264parse ! autovideosink)
+     #+end_src
