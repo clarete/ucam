@@ -1,4 +1,6 @@
-const TOKEN_SESSION_KEY = "user-token"
+import { getCookieValue, setCookieValue } from './cookies';
+
+const COOKIE_KEY = "user-token"
 
 export const AuthState = {
   Anonymous:     1 << 1,
@@ -18,11 +20,13 @@ AuthState.fromID = (id) => ({
 export async function login({ jid, password }) {
   const response = await fetch('/api/auth', {
     method: 'post',
-    body: JSON.stringify({ jid }),
+    body: JSON.stringify({ jid, password }),
     headers: { 'Content-Type': 'application/json' },
   });
   switch (response.status) {
   case 200:
+    console.dir(response);
+    //setCookieValue(COOKIE_KEY)
     return { authState: AuthState.Authenticated };
   default:
     const authError = {
@@ -31,4 +35,14 @@ export async function login({ jid, password }) {
     };
     return { authState: AuthState.Failed, authError };
   }
+}
+
+/// Get you the auth cookie or undefined
+export function getAuthCookie() {
+  return getCookieValue(COOKIE_KEY);
+}
+
+/// Retrieve initial authentication state
+export function getInitialAuthState() {
+  return getAuthCookie() === undefined ? AuthState.Anonymous : AuthState.Authenticated;
 }

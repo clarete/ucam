@@ -1,5 +1,5 @@
 import { createContext, useReducer, createRef } from 'react';
-import { AuthState } from '../services/auth';
+import { getInitialAuthState } from '../services/auth';
 import { createReducer } from './reducers';
 
 /// State of webrtc connections.  There is no need to describe a value
@@ -15,7 +15,7 @@ export const PeerState = {
 /// session storage for application data.
 const initialState = {
   /// where are we in the authentication process
-  authState: AuthState.Anonymous,
+  authState: getInitialAuthState(),
   /// struct with both http status and http status text of the
   /// authentication call
   authError: null,

@@ -24,6 +24,10 @@ const Error = styled.div`
   color: #ee2200;
 `;
 
+const ButtonShell = styled.div`
+  margin-top: 15px;
+`;
+
 export default function AuthForm() {
   const { authState, authError, auth } = useAuthState();
   const { register, handleSubmit, errors } = useForm();
@@ -53,8 +57,23 @@ export default function AuthForm() {
             autoFocus
             inputRef={register({ required: true })}
           />
-
           {errors.jid &&
+           <Error>
+             This field is required.
+           </Error>}
+
+          <TextField
+            variant="outlined"
+            margin="normal"
+            required
+            fullWidth
+            type="password"
+            id="password"
+            label="Password"
+            name="password"
+            inputRef={register({ required: true })}
+          />
+          {errors.password &&
            <Error>
              This field is required.
            </Error>}
@@ -64,14 +83,16 @@ export default function AuthForm() {
              {authError.httpString}.
            </Error>}
 
-          <Button
-            type="submit"
-            fullWidth
-            variant="contained"
-            color="primary"
-          >
-            Sign In
-          </Button>
+          <ButtonShell>
+            <Button
+              type="submit"
+              fullWidth
+              variant="contained"
+              color="primary"
+            >
+              Sign In
+            </Button>
+          </ButtonShell>
         </form>
       </Container>
     </CenterCenterShell>
