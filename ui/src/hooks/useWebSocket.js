@@ -82,7 +82,7 @@ function makeMessageHandler(state, dispatch) {
         }
       }
     }
-  }
+  };
 }
 
 function webSocketUrl(state) {

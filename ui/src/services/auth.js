@@ -1,6 +1,6 @@
 import { getCookieValue, setCookieValue } from './cookies';
 
-const COOKIE_KEY = "user-token"
+const COOKIE_KEY = "user-token";
 
 export const AuthState = {
   Anonymous:     1 << 1,

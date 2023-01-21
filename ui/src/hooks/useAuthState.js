@@ -19,7 +19,7 @@ export function useAuthState() {
     }
 
     dispatch({ type: actions.AUTH_FAILURE, authState, authError });
-  }
+  };
 
   return { authState, authError, auth };
 }
