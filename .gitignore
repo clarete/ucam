@@ -10,6 +10,7 @@ server/certs/*.pem
 server/certs/*.crt
 server/certs/*.csr
 server/certs/*.key
+server/certs/*.srl
 server/server.toml
 capture/capture.toml
 storage/storage.toml
