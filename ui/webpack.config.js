@@ -1,4 +1,7 @@
+const fs = require('fs');
 const path = require('path');
+
+const host = 'localhost';
 
 module.exports = {
   mode: "production",
@@ -46,15 +49,34 @@ module.exports = {
     filename: 'main.js'
   },
   devServer: {
+    host,
+    client: {
+      overlay: {
+        warnings: false,
+        errors: false,
+      },
+    },
+    static: {
+      directory: path.join(__dirname, '.'),
+      serveIndex: true,
+    },
+    server: {
+      type: 'https',
+      options: {
+        key: fs.readFileSync('../server/certs/server.key'),
+        cert: fs.readFileSync('../server/certs/server.crt'),
+        ca: fs.readFileSync('../server/certs/rootCA.pem'),
+      },
+    },
     proxy: {
       '/wss': {
-        target: 'http://guinho.home:7070',
+        target: `http://${host}:7070`,
         secure: true,
         ws: true
       },
 
       '/api': {
-        target: 'https://guinho.home:7070',
+        target: `https://${host}:7070`,
         secure: false,
         changeOrigin: true,
         pathRewrite: {'^/api' : ''}

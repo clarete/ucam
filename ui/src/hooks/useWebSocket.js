@@ -89,5 +89,5 @@ function webSocketUrl(state) {
   // TODO: might need to use something like `state.authToken' here,
   // that's why we're taking the state as a parameter.  Might not be
   // needed once the auth token is stored in the browser's cookie jar.
-  return 'wss://guinho.home:7070/ws?token=admin@domain.tld';
+  return 'wss://localhost:7070/ws?token=admin@domain.tld';
 }

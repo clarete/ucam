@@ -11,4 +11,4 @@ L = New York
 O = Home
 OU = RootCA
 emailAddress = lincoln@guinho.home
-CN = guinho.home
+CN = localhost
